@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:14:31-08:00 (1794554071)
+ *	@Last modified time: 2026-11-12T23:15:05-08:00 (1794554105)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -34,8 +34,7 @@ import { constants as fsConstants, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { OtpError } from "../errors.mjs";
 import { name, parseOtpOptions, version } from "../index.mjs";
-import { base32Decode, totpAt } from "../totp.mjs";
-import { newSeed, otpauthUri, renderQr, verifyCode } from "../enrol.mjs";
+import { currentCode, newSeed, otpauthUri, renderQr, verifyCode } from "../enrol.mjs";
 
 /**
  * A usage error: bad subcommand, unknown option, a missing seed source. Always exit 2.
@@ -450,19 +449,13 @@ async function runQr(opts, io, config, seed) {
 }
 
 /**
- * `otp code` — the code the seed generates right now.
+ * `otp code` — the code the seed generates right now, through the library's
+ * `currentCode`: the same decode and refusals as `verifyCode`, so the CLI can never
+ * display a code for a seed the verifier would refuse.
  * @returns {Promise<number>} The exit code.
  */
 async function runCode(opts, io, config, seed) {
-	let key;
-	try {
-		key = base32Decode(seed);
-	} catch (err) {
-		// The only thrower is the library's base32Decode, whose message names the problem
-		// ("base32: invalid character") and never the seed itself.
-		throw new OtpError("OTP_SEED_INVALID", `the seed is not valid base32: ${err.message}`);
-	}
-	const code = totpAt(key, nowOf(io), config.digits, config.algorithm, config.periodSeconds);
+	const code = currentCode(seed, nowOf(io), config);
 	io.stdout.write(opts.json ? `${JSON.stringify({ code })}\n` : `${code}\n`);
 	return 0;
 }

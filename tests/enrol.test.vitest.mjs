@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
+ *	@Last modified time: 2026-11-12T23:15:06-08:00 (1794554106)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -17,7 +17,7 @@ import { describe, it, expect } from "vitest";
 import { base32Decode, base32Encode, hotp, matchStep, stepAt } from "../src/totp.mjs";
 import { parseOtpOptions } from "../src/options.mjs";
 import { OtpError } from "../src/errors.mjs";
-import { newSeed, otpauthUri, renderQr, verifyCode } from "../src/enrol.mjs";
+import { currentCode, newSeed, otpauthUri, renderQr, verifyCode } from "../src/enrol.mjs";
 
 // RFC 6238 appendix B seed: the ASCII string "12345678901234567890".
 const KEY = Buffer.from("12345678901234567890", "ascii");
@@ -85,6 +85,51 @@ describe("verifyCode", () => {
 	it("tolerates lowercase and trailing padding in the seed", () => {
 		expect(verifyCode(SEED.toLowerCase(), hotp(KEY, stepAt(T)), T, config)).toBe(stepAt(T));
 		expect(verifyCode(`${SEED}======`, hotp(KEY, stepAt(T)), T, config)).toBe(stepAt(T));
+	});
+});
+
+describe("currentCode", () => {
+	it("matches the RFC 6238 vectors (the code the authenticator shows, no skew)", () => {
+		const eight = parseOtpOptions({ digits: 8 });
+		expect(currentCode(SEED, 59_000, eight)).toBe("94287082");
+		expect(currentCode(SEED, T, eight)).toBe("14050471");
+	});
+
+	it("is config-driven: digits, period and algorithm come from the config", () => {
+		const c = parseOtpOptions({ digits: 8, periodSeconds: 60, algorithm: "SHA256" });
+		expect(currentCode(SEED, T, c)).toBe(hotp(KEY, stepAt(T, c.periodSeconds), c.digits, c.algorithm));
+		expect(currentCode(SEED, T)).toBe(hotp(KEY, stepAt(T), 6, "SHA1"));
+	});
+
+	it("agrees with verifyCode on the code it matches at the current step", () => {
+		// The code currentCode shows at T verifies at T with zero skew — and matches at
+		// the default skew of one step either side.
+		const code = currentCode(SEED, T, parseOtpOptions({ skewSteps: 0 }));
+		expect(verifyCode(SEED, code, T, parseOtpOptions({ skewSteps: 0 }))).toBe(stepAt(T));
+		expect(verifyCode(SEED, code, T, config)).toBe(stepAt(T));
+	});
+
+	it("refuses exactly what verifyCode refuses — a display path can never accept a seed the verifier rejects", () => {
+		// Padding-only seed: it decodes to zero bytes, which is just as broken.
+		expect(() => currentCode("====", T, config)).toThrow(OtpError);
+		try {
+			currentCode("====", T, config);
+		} catch (err) {
+			expect(err.code).toBe("OTP_SEED_INVALID");
+			expect(err.message).toMatch(/the seed is empty/);
+		}
+		// A valid alphabet but a zero-byte key ("AA" decodes to 1 byte, which verifyCode
+		// accepts as a merely never-matching seed — so currentCode shows a code for it too).
+		expect(() => currentCode("A", T, config)).toThrow(/the seed is empty/);
+		expect(() => currentCode("A=", T, config)).toThrow(/the seed is empty/);
+		// Not base32 at all.
+		expect(() => currentCode("!!not base32!!", T, config)).toThrow(/not valid base32/);
+		expect(() => currentCode("MZ=XW", T, config)).toThrow(/not valid base32/);
+		// Empty or non-string.
+		for (const seed of ["", undefined, null, 5]) {
+			expect(() => currentCode(seed, T, config)).toThrow(OtpError);
+			expect(() => currentCode(seed, T, config)).toThrow(/seed must be a non-empty base32 string/);
+		}
 	});
 });
 
