@@ -1,0 +1,59 @@
+#
+#	@Project: @cldmv/otp
+#	@Filename: /.github/workflows/stale.yml
+#	@Date: 2026-05-20T00:00:00-07:00 (1779260400)
+#	@Author: Nate Corcoran <CLDMV>
+#	@Email: <Shinrai@users.noreply.github.com>
+#	-----
+#	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
+#	@Last modified time: 2026-11-12T18:03:03-08:00 (1794535383)
+#	-----
+#	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Individual repo: .github/workflows/stale.yml
+#
+# First-run guidance: on a repo with an existing backlog, the first
+# scheduled run can mark a LOT of issues stale at once (notification storm).
+# Recommended: enable with `dry_run: true` first, dispatch manually to
+# preview, then flip to live. The dispatch input below makes this easy.
+#
+# Keeping an issue open indefinitely: add the `pinned` label (part of the org
+# label set). Pinned issues and PRs are never marked stale or closed, and adding
+# it to one that's already marked stale removes the stale label on the next run.
+# Also exempt by default: `security`, `help wanted`, `good first issue`,
+# `status: blocked`, anything with an assignee or a milestone, and (PRs)
+# `work-in-progress` / `dependencies` / `type: dependencies`.
+#
+# Batch 2.3 from tmp/plan-future-workflows.md.
+name: 🍂 Stale Issues & PRs
+
+on:
+    schedule:
+        - cron: "13 5 * * *" # daily 05:13 UTC (off-the-hour to avoid GH cron stampede)
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Preview only — no changes will be made"
+                type: boolean
+                default: false
+
+permissions:
+    issues: write
+    pull-requests: write
+
+jobs:
+    sweep:
+        uses: CLDMV/.github/.github/workflows/reusable-stale.yml@v4
+        with:
+            dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+            # Override timers if needed:
+            # days_before_issue_stale: 60
+            # days_before_issue_close: 14
+            # days_before_pr_stale: 30
+            # days_before_pr_close: 7
+            # Override exemptions (replaces the default list — keep `pinned`):
+            # exempt_issue_labels: "pinned,security,help wanted,good first issue,status: blocked"
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
