@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:14:32-08:00 (1794554072)
+ *	@Last modified time: 2026-11-12T23:18:28-08:00 (1794554308)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -23,7 +23,7 @@
 import { describe, expect, it, vi, afterAll } from "vitest";
 import { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { run, defaultIo, isMainScript } from "../src/bin/otp.mjs";
 import { base32Decode, name, totpAt, version } from "../src/index.mjs";
 
@@ -44,7 +44,7 @@ function io({ input = "", stdin, ...overrides } = {}) {
 		stdin: stdin ?? Readable.from([input]),
 		stdout: { write: (s) => out.push(s) },
 		stderr: { write: (s) => err.push(s) },
-		readFile: async () => {
+		readSeedFile: async () => {
 			throw new Error("no seed file configured");
 		},
 		writeExclusive: async () => {},
@@ -164,7 +164,7 @@ describe("the seed source rule", () => {
 	});
 
 	it("reads the seed from --seed-file", async () => {
-		const t = io({ readFile: async () => `${SEED}\n` });
+		const t = io({ readSeedFile: async () => ({ text: `${SEED}\n`, mode: 0o600 }) });
 		await expect(run(["uri", "--seed-file", "/path/seed.txt", "--label", "a"], t)).resolves.toBe(0);
 		expect(text(t.out)).toContain("otpauth://totp/");
 	});
@@ -196,7 +196,7 @@ describe("the seed source rule", () => {
 
 	it("is an error (exit 1) when the seed file cannot be read", async () => {
 		const t = io({
-			readFile: async () => {
+			readSeedFile: async () => {
 				throw new Error("EACCES: permission denied");
 			}
 		});
@@ -227,13 +227,260 @@ describe("the seed source rule", () => {
 
 	it("never echoes the seed value when the seed file is unreadable", async () => {
 		const t = io({
-			readFile: async () => {
+			readSeedFile: async () => {
 				throw new Error("denied");
 			}
 		});
 		await expect(run(["verify", "123456", "--seed-file", "/x"], t)).resolves.toBe(1);
 		const everything = text(t.out) + text(t.err);
 		expect(everything).not.toContain(SEED);
+	});
+});
+
+describe("the seed-file warning (readable by group/other)", () => {
+	/**
+	 * Stub process.platform for one test — the win32 skip is otherwise unreachable on a
+	 * linux CI box, and an uncovered branch would lie about the check running there.
+	 * @param {string} platform
+	 * @param {() => Promise<void>} fn
+	 * @returns {Promise<void>}
+	 */
+	async function withPlatform(platform, fn) {
+		const real = process.platform;
+		Object.defineProperty(process, "platform", { value: platform, configurable: true });
+		try {
+			await fn();
+		} finally {
+			Object.defineProperty(process, "platform", { value: real, configurable: true });
+		}
+	}
+
+	it("warns on stderr in human mode when the seed file is readable by group/other", async () => {
+		const t = io({ readSeedFile: async () => ({ text: SEED, mode: 0o100644 }) });
+		await expect(run(["code", "--seed-file", "/seeds/a.txt"], t)).resolves.toBe(0);
+		expect(text(t.err)).toBe("warning: the seed file is readable by group/other: /seeds/a.txt\n");
+		expect(text(t.out)).toMatch(/^\d{6}\n$/);
+	});
+
+	it("folds the warning into the one stdout object under --json (stderr stays empty)", async () => {
+		const t = io({ readSeedFile: async () => ({ text: SEED, mode: 0o100664 }) });
+		await expect(run(["code", "--seed-file", "/seeds/a.txt", "--json"], t)).resolves.toBe(0);
+		const parsed = JSON.parse(text(t.out));
+		expect(parsed.code).toMatch(/^\d{6}$/);
+		expect(parsed.warnings).toEqual(["warning: the seed file is readable by group/other: /seeds/a.txt"]);
+		expect(t.err).toEqual([]);
+	});
+
+	it("stays silent for a 0600 seed file", async () => {
+		const t = io({ readSeedFile: async () => ({ text: SEED, mode: 0o100600 }) });
+		await expect(run(["code", "--seed-file", "/seeds/a.txt", "--json"], t)).resolves.toBe(0);
+		expect(Object.keys(JSON.parse(text(t.out)))).toEqual(["code"]);
+		expect(t.err).toEqual([]);
+	});
+
+	it("stays silent when the reader surfaces no mode at all", async () => {
+		const t = io({ readSeedFile: async () => ({ text: SEED }) });
+		await expect(run(["code", "--seed-file", "/seeds/a.txt"], t)).resolves.toBe(0);
+		expect(t.err).toEqual([]);
+	});
+
+	it("skips the check on win32 — its permission bits carry no group/other semantics", async () => {
+		await withPlatform("win32", async () => {
+			const t = io({ readSeedFile: async () => ({ text: SEED, mode: 0o100666 }) });
+			await expect(run(["code", "--seed-file", "/seeds/a.txt"], t)).resolves.toBe(0);
+			expect(t.err).toEqual([]);
+		});
+	});
+});
+
+describe("the 1 KiB seed cap", () => {
+	const OVER = "A".repeat(1025);
+	const EXACT = "A".repeat(1024);
+
+	it("refuses a stdin seed over 1 KiB (exit 1)", async () => {
+		const t = io({ input: OVER });
+		await expect(run(["code"], t)).resolves.toBe(1);
+		expect(text(t.err)).toContain("larger than 1024 bytes");
+	});
+
+	it("refuses an oversized stdin seed as JSON under --json", async () => {
+		const t = io({ input: OVER });
+		await expect(run(["code", "--json"], t)).resolves.toBe(1);
+		expect(JSON.parse(text(t.out)).error.code).toBe("OTP_SEED_TOO_LARGE");
+	});
+
+	it("refuses an oversized seed file — and never echoes its content", async () => {
+		const t = io({ readSeedFile: async () => ({ text: OVER, mode: 0o600 }) });
+		await expect(run(["code", "--seed-file", "/seeds/big.txt"], t)).resolves.toBe(1);
+		expect(text(t.err)).toContain("larger than 1024 bytes");
+		expect(text(t.err)).not.toContain("AAAAAA");
+	});
+
+	it("accepts a seed of exactly 1024 bytes", async () => {
+		const t = io({ input: EXACT });
+		await expect(run(["code"], t)).resolves.toBe(0);
+		expect(text(t.out)).toMatch(/^\d{6}\n$/);
+	});
+
+	it("destroys the stdin stream once the cap is exceeded", async () => {
+		const stream = new Readable({
+			read() {
+				this.push("A".repeat(2048));
+				this.push(null);
+			}
+		});
+		const t = io({ stdin: stream });
+		await expect(run(["code"], t)).resolves.toBe(1);
+		expect(stream.destroyed).toBe(true);
+	});
+});
+
+describe("seed files against the real filesystem (the default readSeedFile)", () => {
+	// Real files under the repo's gitignored tmp/ (see scratch-files.md); removed again
+	// in afterAll. Real readSeedFile: O_NOFOLLOW open, fstat, read.
+	const FIXTURES = fileURLToPath(new URL("../tmp/agents/glm/otp3-fix/fs-fixtures/", import.meta.url));
+
+	/** run() over the real filesystem: real readSeedFile, captured streams. */
+	function realIo() {
+		const out = [];
+		const err = [];
+		return {
+			out,
+			err,
+			io: { ...defaultIo(), stdin: Readable.from([]), stdout: { write: (s) => out.push(s) }, stderr: { write: (s) => err.push(s) } }
+		};
+	}
+
+	afterAll(() => {
+		rmSync(FIXTURES, { recursive: true, force: true });
+	});
+
+	it("refuses a symlinked seed file (O_NOFOLLOW) — exit 1, never the target's contents", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const target = `${FIXTURES}real-seed.txt`;
+		const link = `${FIXTURES}link-seed.txt`;
+		writeFileSync(target, SEED);
+		symlinkSync(target, link);
+		const t = realIo();
+		await expect(run(["code", "--seed-file", link], t.io)).resolves.toBe(1);
+		expect(text(t.err)).toContain("cannot read the seed file");
+		expect(text(t.out) + text(t.err)).not.toContain(SEED);
+	});
+
+	it("warns on a group/other-readable seed file and stays silent at 0600", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const loose = `${FIXTURES}loose-seed.txt`;
+		writeFileSync(loose, SEED);
+		chmodSync(loose, 0o644);
+		const looseRun = realIo();
+		await expect(run(["code", "--seed-file", loose], looseRun.io)).resolves.toBe(0);
+		expect(text(looseRun.err)).toContain(`warning: the seed file is readable by group/other: ${loose}`);
+
+		const tight = `${FIXTURES}tight-seed.txt`;
+		writeFileSync(tight, SEED);
+		chmodSync(tight, 0o600);
+		const tightRun = realIo();
+		await expect(run(["code", "--seed-file", tight], tightRun.io)).resolves.toBe(0);
+		expect(tightRun.err).toEqual([]);
+	});
+
+	it("refuses a seed file over 1 KiB as JSON under --json", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const big = `${FIXTURES}big-seed.txt`;
+		writeFileSync(big, `${"A".repeat(2048)}\n`);
+		const t = realIo();
+		await expect(run(["code", "--seed-file", big, "--json"], t.io)).resolves.toBe(1);
+		expect(JSON.parse(text(t.out)).error.code).toBe("OTP_SEED_TOO_LARGE");
+	});
+});
+
+describe("option values that look like flags", () => {
+	it("rejects a separate value starting with -- (--seed-file --json)", async () => {
+		const t = io();
+		await expect(run(["uri", "--seed-file", "--json", "--label", "a"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain('option "--seed-file" needs a value');
+		expect(text(t.err)).toContain('may not start with "--"');
+	});
+
+	it("keeps the mode the parse produced: --label --json errors as text, not JSON", async () => {
+		const t = io({ input: SEED });
+		await expect(run(["uri", "--label", "--json"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain('option "--label" needs a value');
+		expect(t.out).toEqual([]);
+	});
+
+	it("stays in JSON mode when --json was parsed before the failure", async () => {
+		const t = io({ input: SEED });
+		await expect(run(["uri", "--json", "--label"], t)).resolves.toBe(2);
+		expect(JSON.parse(text(t.out)).error.code).toBe("OTP_USAGE");
+		expect(t.err).toEqual([]);
+	});
+});
+
+describe("-- ends the options", () => {
+	it("treats everything after -- as positional (verify -- <code>)", async () => {
+		const t = io({ input: SEED });
+		const code = totpAt(base32Decode(SEED), NOW, 6, "SHA1", 30);
+		await expect(run(["verify", "--", code], t)).resolves.toBe(0);
+		expect(text(t.out)).toBe("valid\n");
+	});
+
+	it("a flag-shaped token after -- is a positional, not an option", async () => {
+		const t = io({ input: SEED });
+		await expect(run(["code", "--", "--json"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain('code takes no arguments (got "--json")');
+	});
+
+	it("the positional count still applies after --", async () => {
+		const t = io({ input: SEED });
+		await expect(run(["verify", "--", "123456", "654321"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain("verify takes exactly 1 argument");
+	});
+});
+
+describe("strict numeric option values", () => {
+	it.each([
+		["code", "--digits", "0x1e"],
+		["code", "--digits", "6.0"],
+		["code", "--period", "1e2"],
+		["seed", "--length", "0x10"]
+	])("refuses %s %s %s — plain decimal digits only, the library types the refusal", async (command, flag, value) => {
+		const t = io({ input: SEED });
+		await expect(run([command, flag, value, "--json"], t)).resolves.toBe(1);
+		const parsed = JSON.parse(text(t.out));
+		expect(parsed.error.code).toBe("OTP_OPTIONS_INVALID");
+	});
+});
+
+describe("help and version under --json", () => {
+	it("prints the general usage as {usage} under --json", async () => {
+		const t = io();
+		await expect(run(["--json", "--help"], t)).resolves.toBe(0);
+		const parsed = JSON.parse(text(t.out));
+		expect(Object.keys(parsed)).toEqual(["usage"]);
+		expect(parsed.usage).toContain("Subcommands:");
+		expect(t.err).toEqual([]);
+	});
+
+	it("prints a subcommand's usage as {usage} under --json", async () => {
+		const t = io();
+		await expect(run(["verify", "--json", "--help"], t)).resolves.toBe(0);
+		const parsed = JSON.parse(text(t.out));
+		expect(Object.keys(parsed)).toEqual(["usage"]);
+		expect(parsed.usage).toContain("Usage: otp verify <code>");
+	});
+
+	it("prints {name, version} under --json", async () => {
+		const t = io();
+		await expect(run(["--json", "-V"], t)).resolves.toBe(0);
+		expect(JSON.parse(text(t.out))).toEqual({ name, version });
+		expect(t.err).toEqual([]);
+	});
+
+	it("prints {name, version} for a subcommand's --version under --json", async () => {
+		const t = io();
+		await expect(run(["code", "-V", "--json"], t)).resolves.toBe(0);
+		expect(JSON.parse(text(t.out))).toEqual({ name, version });
 	});
 });
 
@@ -652,7 +899,7 @@ describe("the io surface", () => {
 		expect(real.stdout).toBe(process.stdout);
 		expect(real.stderr).toBe(process.stderr);
 		expect(real.now).toBe(Date.now);
-		expect(typeof real.readFile).toBe("function");
+		expect(typeof real.readSeedFile).toBe("function");
 		expect(typeof real.writeExclusive).toBe("function");
 	});
 

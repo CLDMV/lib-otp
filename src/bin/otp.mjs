@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:15:05-08:00 (1794554105)
+ *	@Last modified time: 2026-11-12T23:18:27-08:00 (1794554307)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -21,15 +21,18 @@
  *
  * The seed never travels as a command-line argument (shell history and `ps` would
  * expose it): every subcommand that takes a seed reads it from `--seed-file <path>` or
- * stdin. A terminal on stdin is never read — that is a usage error, not a prompt.
+ * stdin. A terminal on stdin is never read — that is a usage error, not a prompt. A
+ * seed file is opened O_NOFOLLOW (a symlink is refused) and refused when readable by
+ * group/other; a seed over 1 KiB is refused outright.
  *
  * Everything is built for testing: `run(argv, io)` returns the exit code and takes an
- * injectable I/O object (streams, file readers/writers, the clock), and the module has
- * no side effects on import — the main guard at the bottom only fires when the file is
- * executed directly (`node bin/otp.mjs`, `node src/bin/otp.mjs` or the installed `otp`).
+ * injectable I/O object (streams, seed-file reader, exclusive writer, the clock), and
+ * the module has no side effects on import — the main guard at the bottom only fires
+ * when the file is executed directly (`node bin/otp.mjs`, `node src/bin/otp.mjs` or the
+ * installed `otp`).
  */
 
-import { open as fsOpen, readFile as fsReadFile, unlink as fsUnlink } from "node:fs/promises";
+import { open as fsOpen, unlink as fsUnlink } from "node:fs/promises";
 import { constants as fsConstants, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { OtpError } from "../errors.mjs";
@@ -38,17 +41,21 @@ import { currentCode, newSeed, otpauthUri, renderQr, verifyCode } from "../enrol
 
 /**
  * A usage error: bad subcommand, unknown option, a missing seed source. Always exit 2.
- * Carries the usage text to print after the message (the general usage when omitted).
+ * Carries the usage text to print after the message (the general usage when omitted),
+ * and — when the parse got far enough to have options — the options parsed so far, so
+ * the reporter knows which output mode the failing command line had settled on.
  */
 class UsageError extends Error {
 	/**
 	 * @param {string} message What was wrong with the command line.
 	 * @param {string} [usage] The usage text to print (per subcommand when the error
 	 *   belongs to one; the general usage when omitted).
+	 * @param {Record<string, string | boolean>} [opts] The options parsed before the failure.
 	 */
-	constructor(message, usage) {
+	constructor(message, usage, opts) {
 		super(message);
 		this.usage = usage;
+		this.opts = opts;
 	}
 }
 
@@ -68,7 +75,9 @@ Subcommands:
 Seed source:
   Every subcommand that takes a seed reads it from --seed-file <path> or from stdin
   (piped or redirected; "--seed-file -" reads stdin too). A terminal is never read:
-  with no --seed-file and a TTY on stdin, that is a usage error.
+  with no --seed-file and a TTY on stdin, that is a usage error. A seed file may not
+  be a symlink (O_NOFOLLOW), is refused when readable by group or other, and a seed
+  over 1 KiB is refused.
 
 Global options:
   --json          One JSON object on stdout (errors too, with a nonzero exit).
@@ -77,7 +86,7 @@ Global options:
 
 Exit codes:
   0  success
-  1  the code did not verify, or an error (bad seed, unreadable file, bad option value, a missing --label on uri/qr, an existing --out without --force, a failed QR file write)
+  1  the code did not verify, or an error (bad seed, unreadable seed file, a seed over 1 KiB, bad option value, a missing --label on uri/qr, an existing --out without --force, a failed QR file write)
   2  usage error (unknown subcommand or option, wrong positional count, missing seed source, empty seed, stdin is a TTY)
 `;
 
@@ -189,9 +198,31 @@ const FLAG_ALIASES = { "seed-file": "seedFile" };
 /** Flags that are switches, not values: they take no argument, in either spelling. */
 const VALUELESS_FLAGS = new Set(["force"]);
 
+/** O_NOFOLLOW where the platform defines it; win32 lacks the flag, and Number(undefined) is NaN, which bitwise-ORs as 0. */
+const O_NOFOLLOW = Number(fsConstants.O_NOFOLLOW);
+
+/**
+ * The real seed-file reader: opens with O_NOFOLLOW (a symlinked seed file is refused —
+ * ELOOP surfaces as OTP_SEED_FILE_UNREADABLE, never as some other file's contents),
+ * stats the open handle (the mode drives the readable-by-others warning) and reads the
+ * whole file as text.
+ * @param {string} path
+ * @returns {Promise<{ text: string, mode: number }>}
+ */
+async function readSeedFileDefault(path) {
+	const handle = await fsOpen(path, fsConstants.O_RDONLY | O_NOFOLLOW);
+	try {
+		const stat = await handle.stat();
+		const text = await handle.readFile("utf8");
+		return { text, mode: stat.mode };
+	} finally {
+		await handle.close();
+	}
+}
+
 /** The default I/O: the real streams, the real filesystem, the real clock. */
 export function defaultIo() {
-	return { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, readFile: fsReadFile, writeExclusive: writeExclusiveDefault, now: Date.now };
+	return { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, readSeedFile: readSeedFileDefault, writeExclusive: writeExclusiveDefault, now: Date.now };
 }
 
 /**
@@ -245,7 +276,12 @@ export function isMainScript() {
 /**
  * Parse one subcommand's arguments. The global flags are recognized anywhere;
  * everything else must be a listed option or a positional. Option values may be
- * attached (`--digits=8`) or separate (`--digits 8`).
+ * attached (`--digits=8`) or separate (`--digits 8`) — but a separate value may not
+ * itself look like a flag (`--seed-file --json` would otherwise open a file named
+ * "--json", and `--label --json` would leave the output mode and the error mode
+ * disagreeing). `--` ends the options: everything after it is positional. Every usage
+ * failure carries the options parsed so far, so the reporter keeps the output mode the
+ * parse had actually settled on.
  * @param {string[]} argv The subcommand's arguments (without the subcommand itself).
  * @param {string[]} allowedFlags The subcommand's option names (camelCase).
  * @param {string} [usage] The usage text its errors carry (the general one when omitted).
@@ -255,6 +291,10 @@ function parseArgs(argv, allowedFlags, usage) {
 	/** @type {Record<string, string | boolean>} */
 	const opts = {};
 	const positional = [];
+	/** Fail with the options parsed so far — the reporter needs them for the output mode. */
+	const fail = (message) => {
+		throw new UsageError(message, usage, opts);
+	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--json") {
@@ -269,13 +309,17 @@ function parseArgs(argv, allowedFlags, usage) {
 			opts.version = true;
 			continue;
 		}
+		if (arg === "--") {
+			positional.push(...argv.slice(i + 1));
+			break;
+		}
 		if (arg.startsWith("--")) {
 			const eq = arg.indexOf("=");
 			const raw = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
 			const flag = FLAG_ALIASES[raw] ?? raw;
-			if (!allowedFlags.includes(flag)) throw new UsageError(`unknown option "--${raw}"`, usage);
+			if (!allowedFlags.includes(flag)) fail(`unknown option "--${raw}"`);
 			if (VALUELESS_FLAGS.has(flag)) {
-				if (eq !== -1) throw new UsageError(`option "--${raw}" takes no value`, usage);
+				if (eq !== -1) fail(`option "--${raw}" takes no value`);
 				opts[flag] = true;
 				continue;
 			}
@@ -284,11 +328,12 @@ function parseArgs(argv, allowedFlags, usage) {
 				continue;
 			}
 			i++;
-			if (i >= argv.length) throw new UsageError(`option "--${raw}" needs a value`, usage);
+			if (i >= argv.length) fail(`option "--${raw}" needs a value`);
+			if (argv[i].startsWith("--")) fail(`option "--${raw}" needs a value (a value may not start with "--")`);
 			opts[flag] = argv[i];
 			continue;
 		}
-		if (arg.startsWith("-")) throw new UsageError(`unknown option "${arg}"`, usage);
+		if (arg.startsWith("-")) fail(`unknown option "${arg}"`);
 		positional.push(arg);
 	}
 	return { opts, positional };
@@ -309,6 +354,18 @@ function checkPositionals(command, positional, allowed) {
 }
 
 /**
+ * A numeric option value, strictly: plain decimal digits only. `Number()` alone would
+ * accept `"0x1e"` (30), `"6.0"` (6) and `"1e2"` (100) — spellings a config must refuse,
+ * not reinterpret. Anything else becomes NaN, which the library rejects with its typed
+ * `OTP_OPTIONS_INVALID` like any other bad value.
+ * @param {string} value
+ * @returns {number}
+ */
+function toNumber(value) {
+	return /^\d+$/.test(value) ? Number(value) : NaN;
+}
+
+/**
  * The machine config for a subcommand, through the library's own `parseOtpOptions` —
  * the CLI can never disagree with the machine, because it never builds a config by
  * hand. Option values arrive as strings; the numeric ones are converted here and every
@@ -320,64 +377,108 @@ function checkPositionals(command, positional, allowed) {
 function configFrom(opts, map = {}) {
 	/** @type {Record<string, unknown>} */
 	const input = {};
-	if (opts.digits !== undefined) input.digits = Number(opts.digits);
-	if (opts.period !== undefined) input.periodSeconds = Number(opts.period);
+	if (opts.digits !== undefined) input.digits = toNumber(opts.digits);
+	if (opts.period !== undefined) input.periodSeconds = toNumber(opts.period);
 	if (opts.algorithm !== undefined) input.algorithm = String(opts.algorithm).toUpperCase();
 	if (opts.issuer !== undefined) input.uriIssuer = opts.issuer;
 	if (opts.label !== undefined) input.uriLabel = opts.label;
-	if (map.seedBytes && opts.length !== undefined) input.seedBytes = Number(opts.length);
+	if (map.seedBytes && opts.length !== undefined) input.seedBytes = toNumber(opts.length);
 	return parseOtpOptions(input);
 }
 
+/** The most bytes a seed may occupy — a seed is ~32 characters, never a megabyte. */
+const SEED_MAX_BYTES = 1024;
+
 /**
- * Collect a stream (stdin) to EOF as text.
+ * Collect a stream (stdin) to EOF as text, capped: more than {@link SEED_MAX_BYTES}
+ * bytes is a typed error and the stream is destroyed — a seed is never a megabyte, and
+ * an unbounded read would let whatever feeds stdin dictate the CLI's memory.
  * @param {import("node:stream").Readable} stream
  * @returns {Promise<string>}
  */
 function readStream(stream) {
 	return new Promise((resolve, reject) => {
 		let text = "";
+		let bytes = 0;
 		stream.setEncoding("utf8");
 		stream.on("data", (chunk) => {
+			bytes += Buffer.byteLength(chunk);
 			text += chunk;
+			if (bytes > SEED_MAX_BYTES) {
+				stream.destroy();
+				reject(new OtpError("OTP_SEED_TOO_LARGE", `the seed is larger than ${SEED_MAX_BYTES} bytes (the 1 KiB cap)`));
+			}
 		});
 		stream.on("end", () => resolve(text));
 		stream.on("error", (err) => reject(new OtpError("OTP_STDIN_UNREADABLE", `cannot read the seed from stdin: ${err.message}`)));
 	});
 }
 
-/** Strip surrounding whitespace; refuse an empty seed (a usage error, not a library one). */
+/**
+ * Strip surrounding whitespace; refuse a seed over the 1 KiB cap or an empty one (a
+ * usage error for the empty case — the user simply sent nothing — and a typed library
+ * error for the oversized one).
+ * @param {string} text
+ * @param {string} usage
+ * @returns {string}
+ */
 function cleanSeed(text, usage) {
+	if (Buffer.byteLength(text, "utf8") > SEED_MAX_BYTES)
+		throw new OtpError("OTP_SEED_TOO_LARGE", `the seed is larger than ${SEED_MAX_BYTES} bytes (the 1 KiB cap)`);
 	const seed = text.trim();
 	if (seed.length === 0) throw new UsageError("the seed is empty", usage);
 	return seed;
 }
 
 /**
+ * The warning for a seed file whose permission bits let group or other read it — the
+ * path only, never the content. win32 permission bits carry no group/other semantics,
+ * so the check is skipped there. Undefined when there is nothing to warn about.
+ * @param {string} path
+ * @param {number | undefined} mode The file mode from the open handle's fstat.
+ * @returns {string | undefined}
+ */
+function seedFileWarning(path, mode) {
+	if (process.platform === "win32") return undefined;
+	if (typeof mode !== "number" || (mode & 0o077) === 0) return undefined;
+	return `warning: the seed file is readable by group/other: ${path}`;
+}
+
+/**
  * The seed for a subcommand: from `--seed-file <path>` ("-" means stdin), else from
  * stdin — but never from a terminal, and never from the command line. Surrounding
- * whitespace is stripped; an empty result is a usage error. The seed value never
- * appears in any error message.
+ * whitespace is stripped; an empty result is a usage error and an oversized one a typed
+ * error. A seed file readable by group/other warns (to stderr, or folded into the JSON
+ * object's `warnings` array under `--json`). The seed value never appears in any error
+ * message or warning.
  * @param {Record<string, string | boolean>} opts
  * @param {Partial<ReturnType<typeof defaultIo>>} io
  * @param {string} usage The subcommand's usage text (for its usage errors).
- * @returns {Promise<string>}
+ * @returns {Promise<{ seed: string, warnings: string[] }>}
  */
 async function readSeed(opts, io, usage) {
 	if (opts.seedFile !== undefined && opts.seedFile !== "-") {
 		const path = /** @type {string} */ (opts.seedFile);
 		let text;
+		let mode;
 		try {
-			text = await io.readFile(path, "utf8");
+			({ text, mode } = await io.readSeedFile(path));
 		} catch (err) {
 			throw new OtpError("OTP_SEED_FILE_UNREADABLE", `cannot read the seed file ${path}: ${err.message}`);
 		}
-		return cleanSeed(text, usage);
+		/** @type {string[]} */
+		const warnings = [];
+		const warning = seedFileWarning(path, mode);
+		if (warning !== undefined) {
+			if (opts.json) warnings.push(warning);
+			else io.stderr.write(`${warning}\n`);
+		}
+		return { seed: cleanSeed(text, usage), warnings };
 	}
 	if (io.stdin.isTTY) {
 		throw new UsageError("no seed given: pass --seed-file <path> or pipe the seed on stdin (a terminal is never read)", usage);
 	}
-	return cleanSeed(await readStream(io.stdin), usage);
+	return { seed: cleanSeed(await readStream(io.stdin), usage), warnings: [] };
 }
 
 /** The clock: the injectable one when the io carries it, the real one otherwise. */
@@ -408,12 +509,24 @@ async function runSeed(opts, io, config) {
 }
 
 /**
+ * Fold the seed-read warnings into a subcommand's JSON object — only when there are
+ * any, so the documented output shapes stay exact otherwise.
+ * @template T
+ * @param {T} payload
+ * @param {string[]} warnings
+ * @returns {T | (T & { warnings: string[] })}
+ */
+function withWarnings(payload, warnings) {
+	return warnings.length === 0 ? payload : { ...payload, warnings };
+}
+
+/**
  * `otp uri` — the otpauth URI for a seed.
  * @returns {Promise<number>} The exit code.
  */
-async function runUri(opts, io, config, seed) {
+async function runUri(opts, io, config, seed, warnings) {
 	const uri = otpauthUri(seed, undefined, undefined, config);
-	io.stdout.write(opts.json ? `${JSON.stringify({ uri })}\n` : `${uri}\n`);
+	io.stdout.write(opts.json ? `${JSON.stringify(withWarnings({ uri }, warnings))}\n` : `${uri}\n`);
 	return 0;
 }
 
@@ -422,7 +535,7 @@ async function runUri(opts, io, config, seed) {
  * place in the package allowed to touch the filesystem).
  * @returns {Promise<number>} The exit code.
  */
-async function runQr(opts, io, config, seed) {
+async function runQr(opts, io, config, seed, warnings) {
 	const uri = otpauthUri(seed, undefined, undefined, config);
 	if (opts.out !== undefined) {
 		const out = /** @type {string} */ (opts.out);
@@ -439,12 +552,12 @@ async function runQr(opts, io, config, seed) {
 				throw new OtpError("OTP_OUT_EXISTS", `--out ${out} already exists (pass --force to replace it)`);
 			throw err;
 		}
-		io.stdout.write(opts.json ? `${JSON.stringify({ out, format })}\n` : `wrote ${out}\n`);
+		io.stdout.write(opts.json ? `${JSON.stringify(withWarnings({ out, format }, warnings))}\n` : `wrote ${out}\n`);
 		return 0;
 	}
 	// The terminal renderer may or may not end in a newline; end with exactly one.
 	const qr = await renderQr(uri, { format: "terminal" });
-	io.stdout.write(opts.json ? `${JSON.stringify({ qr })}\n` : qr.replace(/\n?$/, "\n"));
+	io.stdout.write(opts.json ? `${JSON.stringify(withWarnings({ qr }, warnings))}\n` : qr.replace(/\n?$/, "\n"));
 	return 0;
 }
 
@@ -454,9 +567,9 @@ async function runQr(opts, io, config, seed) {
  * display a code for a seed the verifier would refuse.
  * @returns {Promise<number>} The exit code.
  */
-async function runCode(opts, io, config, seed) {
+async function runCode(opts, io, config, seed, warnings) {
 	const code = currentCode(seed, nowOf(io), config);
-	io.stdout.write(opts.json ? `${JSON.stringify({ code })}\n` : `${code}\n`);
+	io.stdout.write(opts.json ? `${JSON.stringify(withWarnings({ code }, warnings))}\n` : `${code}\n`);
 	return 0;
 }
 
@@ -466,15 +579,17 @@ async function runCode(opts, io, config, seed) {
  * as "no match".
  * @returns {Promise<number>} The exit code.
  */
-async function runVerify(opts, io, config, seed, code) {
+async function runVerify(opts, io, config, seed, warnings, code) {
 	const valid = verifyCode(seed, code, nowOf(io), config) !== undefined;
-	io.stdout.write(opts.json ? `${JSON.stringify({ valid })}\n` : valid ? "valid\n" : "invalid\n");
+	io.stdout.write(opts.json ? `${JSON.stringify(withWarnings({ valid }, warnings))}\n` : valid ? "valid\n" : "invalid\n");
 	return valid ? 0 : 1;
 }
 
 /**
  * Dispatch one parsed command line. Returns the exit code; throws `UsageError` (exit 2)
- * or propagates library/IO errors (exit 1).
+ * or propagates library/IO errors (exit 1). Every error escaping this function carries
+ * the options its command line parsed — the reporter needs them for the output mode,
+ * and a `--json` swallowed as another option's value is not a mode.
  * @param {string[]} argv
  * @param {ReturnType<typeof defaultIo>} io
  * @returns {Promise<number>}
@@ -483,53 +598,79 @@ async function dispatch(argv, io) {
 	const first = argv[0];
 	// Top level without a subcommand: only the global flags mean anything here.
 	if (first === undefined || first.startsWith("-")) {
-		const globals = parseArgs(argv, []);
-		if (globals.opts.help) {
-			io.stdout.write(GENERAL_USAGE);
+		const { opts, positional } = parseArgs(argv, []);
+		if (opts.help) {
+			io.stdout.write(opts.json ? `${JSON.stringify({ usage: GENERAL_USAGE })}\n` : GENERAL_USAGE);
 			return 0;
 		}
-		if (globals.opts.version) {
-			io.stdout.write(`${name} v${version}\n`);
+		if (opts.version) {
+			io.stdout.write(opts.json ? `${JSON.stringify({ name, version })}\n` : `${name} v${version}\n`);
 			return 0;
 		}
-		throw new UsageError(first === undefined ? "a subcommand is required: seed, uri, qr, code or verify" : `unknown subcommand "${first}"`);
+		if (positional.length > 0) throw new UsageError(`unknown subcommand "${first}"`, undefined, opts);
+		throw new UsageError("a subcommand is required: seed, uri, qr, code or verify", undefined, opts);
 	}
 	const flags = COMMAND_FLAGS[first];
-	if (!flags) throw new UsageError(`unknown subcommand "${first}" (expected seed, uri, qr, code or verify)`);
+	// No flags are known for an unknown subcommand, so a literal --json token can only
+	// mean the global flag — there is nothing here it could be a value of.
+	if (!flags)
+		throw new UsageError(`unknown subcommand "${first}" (expected seed, uri, qr, code or verify)`, undefined, {
+			json: argv.includes("--json")
+		});
 	const { opts, positional } = parseArgs(argv.slice(1), flags, COMMAND_USAGE[first]);
 	if (opts.help) {
-		io.stdout.write(COMMAND_USAGE[first]);
+		io.stdout.write(opts.json ? `${JSON.stringify({ usage: COMMAND_USAGE[first] })}\n` : COMMAND_USAGE[first]);
 		return 0;
 	}
 	if (opts.version) {
-		io.stdout.write(`${name} v${version}\n`);
+		io.stdout.write(opts.json ? `${JSON.stringify({ name, version })}\n` : `${name} v${version}\n`);
 		return 0;
 	}
-	checkPositionals(first, positional, COMMAND_POSITIONALS[first]);
-	const config = configFrom(opts, { seedBytes: first === "seed" });
-	if (first === "seed") return runSeed(opts, io, config);
-	// Every other subcommand needs a seed, which never comes from the command line.
-	const seed = await readSeed(opts, io, COMMAND_USAGE[first]);
-	if (first === "uri") return runUri(opts, io, config, seed);
-	if (first === "qr") return runQr(opts, io, config, seed);
-	if (first === "code") return runCode(opts, io, config, seed);
-	return runVerify(opts, io, config, seed, /** @type {string} */ (positional[0]));
+	try {
+		checkPositionals(first, positional, COMMAND_POSITIONALS[first]);
+		const config = configFrom(opts, { seedBytes: first === "seed" });
+		// `return await` on purpose: a bare `return promise` inside try escapes the catch
+		// below (the async function awaits it after the try has already completed).
+		if (first === "seed") return await runSeed(opts, io, config);
+		// Every other subcommand needs a seed, which never comes from the command line.
+		const { seed, warnings } = await readSeed(opts, io, COMMAND_USAGE[first]);
+		if (first === "uri") return await runUri(opts, io, config, seed, warnings);
+		if (first === "qr") return await runQr(opts, io, config, seed, warnings);
+		if (first === "code") return await runCode(opts, io, config, seed, warnings);
+		return await runVerify(opts, io, config, seed, warnings, /** @type {string} */ (positional[0]));
+	} catch (err) {
+		if (err instanceof UsageError) {
+			if (err.opts === undefined) err.opts = opts;
+			throw err;
+		}
+		if (err instanceof OtpError) {
+			err.opts = opts;
+			throw err;
+		}
+		// An error the io threw (or a bug): normalize it so the reporter keeps the parse's
+		// output mode instead of guessing from raw argv.
+		const wrapped = new OtpError("OTP_CLI_ERROR", err instanceof Error ? err.message : String(err));
+		wrapped.opts = opts;
+		throw wrapped;
+	}
 }
 
 /**
  * Run one command line to completion. Returns the exit code: 0 success, 1 a failed
  * verification or an error, 2 a usage error. Errors surface as plain text on stderr in
  * human mode and as one `{"error": {"code", "message"}}` object on stdout under
- * `--json` — the seed value never appears in either.
+ * `--json` — the seed value never appears in either. The output mode is whatever the
+ * subcommand's own parse produced: a `--json` consumed as another option's value is
+ * not a mode.
  * @param {string[]} argv The command line (without the executable and script path).
  * @param {ReturnType<typeof defaultIo>} [io] Injectable I/O; the real streams, filesystem and clock when omitted.
  * @returns {Promise<number>}
  */
 export async function run(argv, io = defaultIo()) {
-	const json = argv.includes("--json");
 	try {
 		return await dispatch(argv, io);
 	} catch (err) {
+		const json = (err instanceof UsageError || err instanceof OtpError) && err.opts?.json === true;
 		if (err instanceof UsageError) {
 			if (json) io.stdout.write(`${JSON.stringify({ error: { code: "OTP_USAGE", message: err.message } })}\n`);
 			else io.stderr.write(`otp: ${err.message}\n\n${err.usage ?? GENERAL_USAGE}`);
