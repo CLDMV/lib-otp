@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:25-08:00 (1794552145)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -132,6 +132,14 @@ describe("base32 (RFC 4648)", () => {
 	it("rejects characters outside the alphabet", () => {
 		expect(() => base32Decode("MZXW1")).toThrow(/invalid character/);
 		expect(() => base32Decode("MZ=XW")).toThrow(/invalid character/);
+	});
+
+	it("rejects non-ASCII characters before upper-casing (ı would upper-case to I)", () => {
+		for (const bad of ["ı", "MZıXW", "GEZDGNBVGY3TQOJQĞ", "Ω", "👍"]) {
+			expect(() => base32Decode(bad)).toThrow(/invalid character/);
+		}
+		// And through verifyCode the damaged seed is a typed seed error, never a silent match:
+		expect(() => verifyCode("ıZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", "123456", 59_000)).toThrow(/not valid base32/);
 	});
 });
 

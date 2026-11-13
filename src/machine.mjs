@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -278,6 +278,7 @@ export function stepOtp(state, event, config) {
 	const stateProblem = personStateProblem(state);
 	if (stateProblem !== null)
 		throw new OtpError("OTP_STATE_INVALID", `otp machine: state is not a valid PersonState record: ${stateProblem}`);
+	if (typeof event !== "object" || event === null) throw badEvent("event must be an object");
 	switch (event.kind) {
 		case "code-ok":
 			return codeOk(state, event, config);
@@ -364,6 +365,7 @@ function codeOk(state, event, config) {
 		lastAcceptedPeriod: config.periodSeconds,
 		windows
 	});
+	/** @type {OutcomeOpened} */
 	const outcome = config.windowEnabled
 		? { reason: "opened", counter: event.counter, window: event.windowId, expiresAt: new Date(expiresAtMs).toISOString() }
 		: { reason: "opened", counter: event.counter, window: null, expiresAt: null };

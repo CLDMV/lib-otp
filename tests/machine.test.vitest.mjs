@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -635,6 +635,13 @@ describe("stepOtp — validation", () => {
 	it("rejects an unknown event kind", () => {
 		otpError(() => stepOtp(emptyPerson(), { kind: "reset", now: NOW }, config), "OTP_EVENT_INVALID");
 		otpError(() => stepOtp(emptyPerson(), {}, config), "OTP_EVENT_INVALID");
+	});
+
+	it("rejects a non-object event (null included) with a typed error", () => {
+		for (const event of [null, undefined, 5, "code-ok", true]) {
+			const err = otpError(() => stepOtp(emptyPerson(), event, config), "OTP_EVENT_INVALID");
+			expect(err.message).toMatch(/event must be an object/);
+		}
 	});
 
 	it("rejects a non-finite or non-number now", () => {

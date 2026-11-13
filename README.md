@@ -159,17 +159,18 @@ formatStatus(describeUsers(states), { configured: true, unlockCommand: "sudo my-
 
 Every deliberate rejection is an `OtpError` (an `Error` subclass) with a stable `code`:
 
-| `code`                                               | Raised by                                                                    |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value.      |
-| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                         |
-| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                          |
-| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.        |
-| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                        |
-| `OTP_SEED_INVALID`                                   | `verifyCode` / `otpauthUri` — an empty, non-string or non-base32 seed.       |
-| `OTP_SEED_BYTES_INVALID`                             | `newSeed` — a `seedBytes` below 16 (RFC 4226 §4 requires at least 128 bits). |
-| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                                    |
-| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                              |
+| `code`                                               | Raised by                                                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value.                             |
+| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                                                |
+| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                                                 |
+| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.                               |
+| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                                               |
+| `OTP_SEED_INVALID`                                   | `verifyCode` / `otpauthUri` — an empty, non-string or non-base32 seed.                              |
+| `OTP_SEED_BYTES_INVALID`                             | `newSeed` — a `seedBytes` below 16 (RFC 4226 §4 requires at least 128 bits).                        |
+| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                                                           |
+| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                                                     |
+| `OTP_NOW_INVALID`                                    | `describeUser` / `describeUsers` — a missing or non-finite `now` (the library never reads a clock). |
 
 Messages are human-readable and safe to log: they never contain a code, a seed or anything derived from them.
 

@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
+ *	@Last modified time: 2026-11-12T22:45:37-08:00 (1794552337)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -131,11 +131,11 @@ function configProblems(config) {
 	const esc = /** @type {{ factor?: unknown, maxSeconds?: unknown }} */ (config.lockoutEscalation);
 	if (!isObject(esc) || !posInt(esc.factor) || !posInt(esc.maxSeconds)) {
 		problems.push("otp options: lockoutEscalation must be an object with a positive-integer factor and maxSeconds");
-	} else if (isInt(config.lockoutSeconds) && esc.maxSeconds < config.lockoutSeconds) {
+	} else if (isInt(config.lockoutSeconds) && /** @type {number} */ (esc.maxSeconds) < /** @type {number} */ (config.lockoutSeconds)) {
 		problems.push(
 			"otp options: lockoutEscalation.maxSeconds must not be below lockoutSeconds (a cap below the base lockout would clamp every lockout)"
 		);
-	} else if (esc.maxSeconds > MAX_LOCKOUT_SECONDS) {
+	} else if (/** @type {number} */ (esc.maxSeconds) > MAX_LOCKOUT_SECONDS) {
 		problems.push(
 			`otp options: lockoutEscalation.maxSeconds must be at most ${MAX_LOCKOUT_SECONDS} (a larger cap overflows the millisecond range Date can represent)`
 		);

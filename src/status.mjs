@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -42,12 +42,18 @@ import { DEFAULTS } from "./options.mjs";
  * @typedef {PersonFacts & { person: string }} PersonStatus
  */
 
+/** `now` is required everywhere — the library never reads a clock. */
+function requireNow(fn, now) {
+	if (typeof now !== "number" || !Number.isFinite(now))
+		throw new OtpError("OTP_NOW_INVALID", `${fn}: now is required (the library never reads a clock)`);
+}
+
 /**
  * One person's facts, from their record and the limits. Read-only: never mutates and
  * never prunes (pruning is the machine's).
  * @param {import("./machine.mjs").PersonState} person
  * @param {{ maxFailures?: number, maxLockouts?: number, windowMs?: number }} [limits]
- * @param {number} [now] Ms; defaults to the current time.
+ * @param {number} [now] Ms — required (the library never reads a clock); a missing or non-finite now throws OTP_NOW_INVALID.
  * @returns {PersonFacts}
  */
 export function describeUser(
@@ -59,8 +65,7 @@ export function describeUser(
 	} = {},
 	now
 ) {
-	if (typeof now !== "number" || !Number.isFinite(now))
-		throw new TypeError("describeUser: now is required (the library never reads a clock)");
+	requireNow("describeUser", now);
 	const lockedUntil = person.lockedUntil !== null && Date.parse(person.lockedUntil) > now ? person.lockedUntil : null;
 	return {
 		locked: person.hardLock !== null || lockedUntil !== null,
@@ -77,10 +82,11 @@ export function describeUser(
  * The facts for every person in `states`, sorted by name.
  * @param {Record<string, import("./machine.mjs").PersonState>} states Person name → record.
  * @param {{ maxFailures?: number, maxLockouts?: number, windowMs?: number }} [limits]
- * @param {number} [now] Ms; defaults to the current time.
+ * @param {number} [now] Ms — required (the library never reads a clock); a missing or non-finite now throws OTP_NOW_INVALID.
  * @returns {PersonStatus[]}
  */
 export function describeUsers(states, limits = {}, now) {
+	requireNow("describeUsers", now);
 	// Object keys are unique, so the names are never equal — a two-way compare is total here.
 	return Object.entries(states)
 		.sort(([a], [b]) => (a < b ? -1 : 1))

@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -50,9 +50,14 @@ export function base32Encode(bytes) {
 /**
  * Decode RFC 4648 base32. Case-insensitive; trailing "=" padding is tolerated. Throws on
  * any other character, so a damaged seed is reported instead of silently producing
- * codes nobody's authenticator can match.
+ * codes nobody's authenticator can match. Non-ASCII characters are rejected before
+ * upper-casing: some non-ASCII letters upper-case into alphabet characters (ı → I),
+ * which would otherwise silently accept a damaged seed.
  */
 export function base32Decode(text) {
+	for (let i = 0; i < text.length; i++) {
+		if (text.charCodeAt(i) > 127) throw new Error("base32: invalid character");
+	}
 	const clean = text.toUpperCase().replace(/=+$/, "");
 	const out = [];
 	let bits = 0;

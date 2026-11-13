@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -66,11 +66,26 @@ describe("describeUser", () => {
 		});
 	});
 
-	it("requires now (the library never reads a clock)", () => {
+	it("requires now (the library never reads a clock), with a typed error", () => {
 		const person = { ...emptyPerson(), lockedUntil: iso(Date.now() + MIN) };
-		expect(() => describeUser(person)).toThrow(TypeError);
-		expect(() => describeUser(person, {})).toThrow(/now is required/);
+		for (const bad of [undefined, NaN, Infinity, "now"]) {
+			expect(() => describeUser(person, {}, bad)).toThrow(OtpError);
+			try {
+				describeUser(person, {}, bad);
+			} catch (err) {
+				expect(err.code).toBe("OTP_NOW_INVALID");
+				expect(err.message).toMatch(/now is required/);
+			}
+		}
 		expect(describeUser(person, {}, Date.now()).locked).toBe(true);
+	});
+
+	it("describeUsers requires now too (even for an empty map)", () => {
+		for (const bad of [undefined, NaN, "now"]) {
+			expect(() => describeUsers({}, {}, bad)).toThrow(OtpError);
+			expect(() => describeUsers({}, {}, bad)).toThrow(/now is required/);
+		}
+		expect(() => describeUsers({ ada: emptyPerson() }, {}, undefined)).toThrow(OtpError);
 	});
 });
 

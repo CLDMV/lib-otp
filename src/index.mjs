@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
+ *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -20,7 +20,14 @@
  * inputs (no env, no filesystem, no clock, no module state).
  */
 
-/** Package manifest, imported statically (works from `src/` and, inlined, from the bundled `dist/`). */
+/**
+ * Package manifest, imported statically (works from `src/` and, inlined, from the
+ * bundled `dist/`). A default import on purpose: Node's ESM JSON modules expose only a
+ * default export — named imports from JSON (`import { name } from "../package.json"`)
+ * are a bundler feature (vite/esbuild), so they throw a SyntaxError on any plain-Node
+ * load of this file (the `lib-otp-dev` condition, `require(esm)`). The cost is that the
+ * bundled dist inlines the whole manifest, scripts and all — harmless for a ~1 kB file.
+ */
 import pkg from "../package.json" with { type: "json" };
 
 /** The package name, `@cldmv/lib-otp`. */
