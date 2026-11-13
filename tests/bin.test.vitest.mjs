@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:55:58-08:00 (1794552958)
+ *	@Last modified time: 2026-11-12T23:14:32-08:00 (1794554072)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -20,9 +20,10 @@
  * coverage, which is why every branch here is reachable through the injected io.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterAll } from "vitest";
 import { Readable } from "node:stream";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { run, defaultIo, isMainScript } from "../src/bin/otp.mjs";
 import { base32Decode, name, totpAt, version } from "../src/index.mjs";
 
@@ -46,7 +47,7 @@ function io({ input = "", stdin, ...overrides } = {}) {
 		readFile: async () => {
 			throw new Error("no seed file configured");
 		},
-		writeFile: async () => {},
+		writeExclusive: async () => {},
 		now: () => NOW,
 		...overrides
 	};
@@ -355,11 +356,11 @@ describe("otp qr", () => {
 		expect(Object.keys(JSON.parse(text(t.out)))).toEqual(["qr"]);
 	});
 
-	it("writes an SVG file for a .svg --out", async () => {
+	it("writes an SVG file for a .svg --out (exclusively, never forced by default)", async () => {
 		const written = [];
-		const t = io({ input: SEED, writeFile: async (path, data) => written.push([path, data]) });
+		const t = io({ input: SEED, writeExclusive: async (path, data, opts) => written.push([path, data, opts]) });
 		await expect(run(["qr", "--label", "a", "--out", "/tmp/x/qr.svg"], t)).resolves.toBe(0);
-		expect(written).toEqual([["/tmp/x/qr.svg", expect.stringContaining("<svg")]]);
+		expect(written).toEqual([["/tmp/x/qr.svg", expect.stringContaining("<svg"), { force: false }]]);
 		expect(text(t.out)).toBe("wrote /tmp/x/qr.svg\n");
 	});
 
@@ -371,7 +372,7 @@ describe("otp qr", () => {
 
 	it("writes a real PNG (bytes, not a data URL) for a .png --out", async () => {
 		const written = [];
-		const t = io({ input: SEED, writeFile: async (path, data) => written.push([path, data]) });
+		const t = io({ input: SEED, writeExclusive: async (path, data) => written.push([path, data]) });
 		await expect(run(["qr", "--label", "a", "--out", "/x/qr.PNG"], t)).resolves.toBe(0);
 		const [path, data] = written[0];
 		expect(path).toBe("/x/qr.PNG");
@@ -385,6 +386,25 @@ describe("otp qr", () => {
 		expect(JSON.parse(text(t.out))).toEqual({ out: "/x/q.png", format: "png" });
 	});
 
+	it("passes force: true to the exclusive write under --force", async () => {
+		const written = [];
+		const t = io({ input: SEED, writeExclusive: async (path, data, opts) => written.push([path, opts]) });
+		await expect(run(["qr", "--label", "a", "--out", "/x/q.svg", "--force"], t)).resolves.toBe(0);
+		expect(written).toEqual([["/x/q.svg", { force: true }]]);
+	});
+
+	it("rejects an attached value on the switch --force", async () => {
+		const t = io({ input: SEED });
+		await expect(run(["qr", "--label", "a", "--out", "/x/q.svg", "--force=no"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain('option "--force" takes no value');
+	});
+
+	it("rejects --force on a subcommand that has no --out", async () => {
+		const t = io({ input: SEED });
+		await expect(run(["uri", "--force"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain('unknown option "--force"');
+	});
+
 	it("rejects a --out that is neither .png nor .svg", async () => {
 		const t = io({ input: SEED });
 		await expect(run(["qr", "--label", "a", "--out", "/x/qr.gif"], t)).resolves.toBe(2);
@@ -392,18 +412,130 @@ describe("otp qr", () => {
 		expect(text(t.err)).toContain("Usage: otp qr");
 	});
 
+	it("reports an existing --out target as OTP_OUT_EXISTS (exit 1)", async () => {
+		const t = io({
+			input: SEED,
+			writeExclusive: async () => {
+				const err = new Error("EEXIST: file already exists");
+				err.code = "EEXIST";
+				throw err;
+			}
+		});
+		await expect(run(["qr", "--label", "a", "--out", "/x/q.svg"], t)).resolves.toBe(1);
+		expect(text(t.err)).toContain("already exists");
+		expect(text(t.err)).toContain("--force");
+	});
+
+	it("reports an existing --out target as JSON with OTP_OUT_EXISTS", async () => {
+		const t = io({
+			input: SEED,
+			writeExclusive: async () => {
+				const err = new Error("EEXIST: file already exists");
+				err.code = "EEXIST";
+				throw err;
+			}
+		});
+		await expect(run(["qr", "--label", "a", "--out", "/x/q.svg", "--json"], t)).resolves.toBe(1);
+		const parsed = JSON.parse(text(t.out));
+		expect(parsed.error.code).toBe("OTP_OUT_EXISTS");
+		expect(parsed.error.message).toContain("/x/q.svg");
+	});
+
 	it("reports a failed file write as an error (exit 1)", async () => {
-		const t = io({ input: SEED, writeFile: async () => Promise.reject(new Error("EACCES: refused")) });
+		const t = io({ input: SEED, writeExclusive: async () => Promise.reject(new Error("EACCES: refused")) });
 		await expect(run(["qr", "--label", "a", "--out", "/x/q.svg"], t)).resolves.toBe(1);
 		expect(text(t.err)).toContain("EACCES");
 	});
 
 	it("reports a failed file write as JSON with the generic CLI code", async () => {
-		const t = io({ input: SEED, writeFile: async () => Promise.reject("boom-string") });
+		const t = io({ input: SEED, writeExclusive: async () => Promise.reject("boom-string") });
 		await expect(run(["qr", "--label", "a", "--out", "/x/q.svg", "--json"], t)).resolves.toBe(1);
 		const parsed = JSON.parse(text(t.out));
 		expect(parsed.error.code).toBe("OTP_CLI_ERROR");
 		expect(parsed.error.message).toBe("boom-string");
+	});
+});
+
+describe("otp qr --out against the real filesystem (the default writeExclusive)", () => {
+	// Real files under the repo's gitignored tmp/ (see scratch-files.md); removed again
+	// in afterAll. These run through run() with defaultIo()'s real writeExclusive — only
+	// the streams are captured, so stdout stays out of the test log.
+	const FIXTURES = fileURLToPath(new URL("../tmp/agents/glm/otp3-fix/fs-fixtures/", import.meta.url));
+
+	/** run() over the real filesystem: real writeExclusive, captured streams, stdin seed. */
+	function realIo(input = SEED) {
+		const out = [];
+		const err = [];
+		return {
+			out,
+			err,
+			io: { ...defaultIo(), stdin: Readable.from([input]), stdout: { write: (s) => out.push(s) }, stderr: { write: (s) => err.push(s) } }
+		};
+	}
+
+	afterAll(() => {
+		rmSync(FIXTURES, { recursive: true, force: true });
+	});
+
+	it("creates the file with mode 0600 — the QR is the seed in disguise", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const out = `${FIXTURES}mode.png`;
+		const t = realIo();
+		await expect(run(["qr", "--label", "a", "--out", out], t.io)).resolves.toBe(0);
+		expect(readFileSync(out).slice(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+		// The create asked for 0600 and the process umask cannot add bits back.
+		expect(statSync(out).mode & 0o777).toBe(0o600);
+	});
+
+	it("refuses a symlinked --out target instead of writing through it", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const victim = `${FIXTURES}victim.txt`;
+		const link = `${FIXTURES}link.png`;
+		writeFileSync(victim, "do not lose me");
+		symlinkSync(victim, link);
+		const t = realIo();
+		await expect(run(["qr", "--label", "a", "--out", link], t.io)).resolves.toBe(1);
+		expect(text(t.err)).toContain("already exists");
+		expect(text(t.err)).toContain("--force");
+		// The symlink's target is untouched — O_EXCL refused the link, it did not follow it.
+		expect(readFileSync(victim, "utf8")).toBe("do not lose me");
+		expect(statSync(victim).isFile()).toBe(true);
+	});
+
+	it("refuses an existing file without --force", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const out = `${FIXTURES}existing.png`;
+		writeFileSync(out, "old content");
+		const t = realIo();
+		await expect(run(["qr", "--label", "a", "--out", out], t.io)).resolves.toBe(1);
+		expect(text(t.err)).toContain("already exists");
+		expect(readFileSync(out, "utf8")).toBe("old content");
+	});
+
+	it("replaces an existing file with a fresh 0600 file under --force", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const out = `${FIXTURES}forced.png`;
+		writeFileSync(out, "old content");
+		const t = realIo();
+		await expect(run(["qr", "--label", "a", "--out", out, "--force"], t.io)).resolves.toBe(0);
+		expect(readFileSync(out).slice(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+		expect(statSync(out).mode & 0o777).toBe(0o600);
+	});
+
+	it("creates the file when --force names a target that does not exist yet", async () => {
+		mkdirSync(FIXTURES, { recursive: true });
+		const out = `${FIXTURES}forced-fresh.png`;
+		const t = realIo();
+		await expect(run(["qr", "--label", "a", "--out", out, "--force"], t.io)).resolves.toBe(0);
+		expect(readFileSync(out).slice(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	});
+
+	it("fails when --force cannot unlink the target (a directory is not a file)", async () => {
+		mkdirSync(`${FIXTURES}dir.png`, { recursive: true });
+		const t = realIo();
+		await expect(run(["qr", "--label", "a", "--out", `${FIXTURES}dir.png`, "--force"], t.io)).resolves.toBe(1);
+		expect(text(t.err)).toContain("otp:");
+		expect(text(t.out)).toBe("");
 	});
 });
 
@@ -521,7 +653,7 @@ describe("the io surface", () => {
 		expect(real.stderr).toBe(process.stderr);
 		expect(real.now).toBe(Date.now);
 		expect(typeof real.readFile).toBe("function");
-		expect(typeof real.writeFile).toBe("function");
+		expect(typeof real.writeExclusive).toBe("function");
 	});
 
 	it("run() falls back to the real io when none is injected (default parameter)", async () => {

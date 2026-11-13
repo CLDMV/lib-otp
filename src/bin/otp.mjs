@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:07:17-08:00 (1794553637)
+ *	@Last modified time: 2026-11-12T23:14:31-08:00 (1794554071)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -29,8 +29,8 @@
  * executed directly (`node bin/otp.mjs`, `node src/bin/otp.mjs` or the installed `otp`).
  */
 
-import { readFile as fsReadFile, writeFile as fsWriteFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { open as fsOpen, readFile as fsReadFile, unlink as fsUnlink } from "node:fs/promises";
+import { constants as fsConstants, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { OtpError } from "../errors.mjs";
 import { name, parseOtpOptions, version } from "../index.mjs";
@@ -78,7 +78,7 @@ Global options:
 
 Exit codes:
   0  success
-  1  the code did not verify, or an error (bad seed, unreadable file, bad option value, a missing --label on uri/qr, a failed QR file write)
+  1  the code did not verify, or an error (bad seed, unreadable file, bad option value, a missing --label on uri/qr, an existing --out without --force, a failed QR file write)
   2  usage error (unknown subcommand or option, wrong positional count, missing seed source, empty seed, stdin is a TTY)
 `;
 
@@ -124,6 +124,11 @@ Options:
   --seed-file <path>   Read the seed from a file ("-" reads stdin; default: stdin).
   --out <file>         Write the QR to a file instead: a .png file (real PNG bytes)
                        or an .svg file. Without --out, the QR goes to the terminal.
+                       The file is created exclusively with mode 0600 — an existing
+                       file, or a symlink in the path, is refused (the QR is the seed
+                       in disguise).
+  --force              With --out: unlink an existing target first and write a fresh
+                       file. Without it, an existing target is an error.
   --label <label>      Account label in the URI (required — there is no default).
   --issuer <issuer>    Issuer in the URI (default: the config's uriIssuer).
   --digits <6|7|8>     Digits in a code (default: 6).
@@ -165,7 +170,7 @@ Options:
 const COMMAND_FLAGS = {
 	seed: ["length", "algorithm", "label", "issuer", "digits", "period"],
 	uri: ["label", "issuer", "digits", "period", "algorithm", "seedFile"],
-	qr: ["label", "issuer", "digits", "period", "algorithm", "seedFile", "out"],
+	qr: ["label", "issuer", "digits", "period", "algorithm", "seedFile", "out", "force"],
 	code: ["digits", "period", "algorithm", "seedFile"],
 	verify: ["digits", "period", "algorithm", "seedFile"]
 };
@@ -182,9 +187,41 @@ const COMMAND_POSITIONALS = {
 /** Option spellings that map onto a camelCase flag name. */
 const FLAG_ALIASES = { "seed-file": "seedFile" };
 
+/** Flags that are switches, not values: they take no argument, in either spelling. */
+const VALUELESS_FLAGS = new Set(["force"]);
+
 /** The default I/O: the real streams, the real filesystem, the real clock. */
 export function defaultIo() {
-	return { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, readFile: fsReadFile, writeFile: fsWriteFile, now: Date.now };
+	return { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, readFile: fsReadFile, writeExclusive: writeExclusiveDefault, now: Date.now };
+}
+
+/**
+ * The real exclusive writer, over `fs.open(path, "wx", 0o600)` — O_CREAT|O_EXCL with
+ * mode 0600. An existing file is refused with EEXIST instead of being truncated, and so
+ * is a symlink in the final path component (O_EXCL never follows one): the QR is the
+ * seed in disguise, so it must never land world-readable and never clobber whatever the
+ * path pointed at. With `force` an existing target is unlinked first and the exclusive
+ * create runs again — the replacement is a fresh 0600 file, not an in-place overwrite.
+ * @param {string} path
+ * @param {string | Uint8Array} data
+ * @param {{ force?: boolean }} [opts]
+ * @returns {Promise<void>}
+ */
+async function writeExclusiveDefault(path, data, { force = false } = {}) {
+	if (force) {
+		try {
+			await fsUnlink(path);
+		} catch (err) {
+			// The target being force-replaced may already be gone; anything else is real.
+			if (/** @type {NodeJS.ErrnoException} */ (err).code !== "ENOENT") throw err;
+		}
+	}
+	const handle = await fsOpen(path, "wx", 0o600);
+	try {
+		await handle.writeFile(data);
+	} finally {
+		await handle.close();
+	}
 }
 
 /**
@@ -238,6 +275,11 @@ function parseArgs(argv, allowedFlags, usage) {
 			const raw = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
 			const flag = FLAG_ALIASES[raw] ?? raw;
 			if (!allowedFlags.includes(flag)) throw new UsageError(`unknown option "--${raw}"`, usage);
+			if (VALUELESS_FLAGS.has(flag)) {
+				if (eq !== -1) throw new UsageError(`option "--${raw}" takes no value`, usage);
+				opts[flag] = true;
+				continue;
+			}
 			if (eq !== -1) {
 				opts[flag] = arg.slice(eq + 1);
 				continue;
@@ -387,8 +429,17 @@ async function runQr(opts, io, config, seed) {
 		const out = /** @type {string} */ (opts.out);
 		const format = /\.png$/i.test(out) ? "png" : /\.svg$/i.test(out) ? "svg" : undefined;
 		if (!format) throw new UsageError(`--out must be a .png or .svg file (got "${out}")`, COMMAND_USAGE.qr);
-		if (format === "png") await io.writeFile(out, await renderQr(uri, { format: "png-buffer" }));
-		else await io.writeFile(out, await renderQr(uri, { format: "svg" }));
+		const data = format === "png" ? await renderQr(uri, { format: "png-buffer" }) : await renderQr(uri, { format: "svg" });
+		try {
+			await io.writeExclusive(out, data, { force: opts.force === true });
+		} catch (err) {
+			// The exclusive create refused an existing target (EEXIST also covers a symlink
+			// in the final path component — O_EXCL never follows one). Anything else is a
+			// plain write failure and keeps its own error.
+			if (typeof err === "object" && err !== null && err.code === "EEXIST")
+				throw new OtpError("OTP_OUT_EXISTS", `--out ${out} already exists (pass --force to replace it)`);
+			throw err;
+		}
 		io.stdout.write(opts.json ? `${JSON.stringify({ out, format })}\n` : `wrote ${out}\n`);
 		return 0;
 	}
