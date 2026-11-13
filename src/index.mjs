@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:44:24-08:00 (1794552264)
+ *	@Last modified time: 2026-11-12T23:15:06-08:00 (1794554106)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -44,6 +44,6 @@ export { DEFAULTS, parseOtpOptions, isOtpMachineConfig } from "./options.mjs";
 
 export { emptyPerson, isPersonState, stepOtp, lockStatus, spendThrough, compactPerson } from "./machine.mjs";
 
-export { verifyCode, newSeed, otpauthUri, renderQr } from "./enrol.mjs";
+export { verifyCode, currentCode, newSeed, otpauthUri, renderQr } from "./enrol.mjs";
 
 export { describeUser, describeUsers, formatStatus } from "./status.mjs";

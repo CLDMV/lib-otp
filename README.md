@@ -136,8 +136,54 @@ console.log(await renderQr(uri)); // terminal QR
 ```
 
 - `verifyCode(seed, code, now, config)` returns the TOTP step the code matches (skew-aware, digit-count from the config), or `undefined` when it matches none. A malformed code — including a non-string one — never matches; **a broken seed throws** — a config error must never read as "no match" and lock everyone out. Take the config — not loose options — so the verifier can't disagree with the machine.
+- `currentCode(seed, now, config)` returns the code an authenticator app would display at `now` — no skew window. It shares `verifyCode`'s decode and refusals (a broken seed throws, never a code for garbage), so a display path can never accept a seed the verifier would refuse.
 - `otpauthUri(seed, label?, issuer?, config)` validates the seed as base32 before anything is interpolated (a raw seed like `"not&valid"` would otherwise inject a URI parameter) and defaults `label`/`issuer` to the config's `uriLabel`/`uriIssuer` when omitted (explicit arguments win).
 - `renderQr(uri, { format })` renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic.
+
+## The `otp` command-line
+
+The package ships an `otp` CLI (the `bin` entry, built to `bin/otp.mjs`): `otp seed | uri | qr | code | verify`. It is a thin wrapper over the exported functions — every option is mapped onto `parseOtpOptions`, so the CLI can never disagree with the machine (a bad value is the library's `OtpError`, never a silent clamp). The CLI is the only part of the package that touches `process.argv`, stdin, the filesystem or the clock; the library stays pure.
+
+```sh
+otp seed --length 32 --label ada@example.com   # a new seed + its otpauth URI (shown once)
+otp uri --seed-file seed.txt --label ada@example.com   # the otpauth URI for a stored seed
+otp qr --seed-file seed.txt --label ada@example.com    # QR in the terminal
+otp qr --seed-file seed.txt --label ada@example.com --out enrol.png   # a real .png (or .svg) file, mode 0600
+otp code --seed-file seed.txt                  # the current code
+otp verify 123456 --seed-file seed.txt         # exit 0 valid, exit 1 invalid
+```
+
+### The seed source — never a command-line argument
+
+Every subcommand that takes a seed reads it from `--seed-file <path>` or from stdin (`--seed-file -` reads stdin too). Surrounding whitespace is stripped. A terminal on stdin is never read — with no `--seed-file` and a TTY on stdin, that is a usage error (exit 2), not a prompt. The seed never travels as an argument (shell history and `ps` would expose it) and never appears in an error message.
+
+Seed files are opened `O_NOFOLLOW`: a symlinked seed file is refused (exit 1, `OTP_SEED_FILE_UNREADABLE`) rather than followed — the CLI reads the file you named, not whatever it points at. (win32 has no `O_NOFOLLOW`; there the file is simply opened.) A seed file readable by group or other produces a warning — `warning: the seed file is readable by group/other: <path>` on stderr (the path, never the content); the check is skipped on win32, where permission bits carry no group/other semantics, and under `--json` the warning appears as a `warnings` array inside the single stdout object instead of on stderr. A seed over 1 KiB is refused on both stdin and files (`OTP_SEED_TOO_LARGE`, exit 1) — a seed is ~32 characters, never a megabyte.
+
+### Writing the QR to a file
+
+`otp qr --out enrol.png` (or `.svg`; the extension decides the format and is checked before the seed is read) writes a real PNG (raw bytes) or SVG. The file is created exclusively — `open(path, "wx", 0o600)`, i.e. O_CREAT|O_EXCL with mode 0600, because the QR encodes the seed and must not land world-readable. An existing file is refused (`OTP_OUT_EXISTS`, exit 1), and so is a symlink in the path — O_EXCL never follows one, so `--out link.png` where `link.png → victim.txt` refuses instead of overwriting `victim.txt`. Pass `--force` to unlink an existing target first and write a fresh 0600 file (the replacement is a new file, not an in-place overwrite).
+
+### Subcommands and flags
+
+| Subcommand      | Flags (default)                                                                                                                                 | Output                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `seed`          | `--length <bytes>` (20, minimum 16 — RFC 4226 §4), `--algorithm <a>` (SHA1; the URI's algorithm), `--label`, `--issuer`, `--digits`, `--period` | The seed labeled `key:`, plus the `uri:` when the config carries a label (without `--label` a hint to run `otp uri` instead). |
+| `uri`           | `--seed-file <path>`, `--label` (required), `--issuer` (the config's `uriIssuer`), `--digits` (6), `--period` (30), `--algorithm` (SHA1)        | The otpauth URI.                                                                                                              |
+| `qr`            | the `uri` flags plus `--out <file>` and `--force`                                                                                               | The QR in the terminal, or — `--out` — a real `.png` (raw PNG bytes) or `.svg` file, created exclusively at mode 0600.        |
+| `code`          | `--seed-file <path>`, `--digits`, `--period`, `--algorithm`                                                                                     | The current code.                                                                                                             |
+| `verify <code>` | `--seed-file <path>`, `--digits`, `--period`, `--algorithm`                                                                                     | `valid` / `invalid`.                                                                                                          |
+
+Every subcommand also takes `--json` (one JSON object on stdout: `{"seed", "uri"?}` / `{"uri"}` / `{"qr"}` or `{"out", "format"}` / `{"code"}` / `{"valid"}`, plus a `warnings` array when the seed read produced one; errors as `{"error": {"code", "message"}}` on stdout with a nonzero exit), `--help` / `-h` (usage per subcommand, exit 0 — under `--json` as `{"usage": "..."}`) and `--version` / `-V` (the package version — under `--json` as `{"name", "version"}`). Flags go after the subcommand (`otp uri --json`, not `otp --json uri`); a separate option value may not itself start with `--` (`--seed-file --json` is a usage error, not a file named `--json`); a flag may not be repeated (`--digits 6 --digits 8` is a usage error); numeric values must be plain decimal digits (`0x1e`, `6.0` and `1e2` are refused, not reinterpreted); and `--` ends the options — everything after it is positional.
+
+### Exit codes
+
+| Code | Meaning                                                                                                                                                                                          |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success — for `verify`, the code matched.                                                                                                                                                        |
+| `1`  | `verify`'s non-match (a normal outcome, `invalid`), or an error: bad seed, seed over 1 KiB, bad option value, unreadable seed file, an existing `--out` without `--force`, failed QR file write. |
+| `2`  | usage error: unknown subcommand or option, repeated flag, an option value that looks like a flag, wrong positional count, missing seed source, TTY on stdin, empty seed.                         |
+
+Under `--json`, errors carry a stable `code`: the library's own (`OTP_SEED_INVALID`, `OTP_OPTIONS_INVALID`, `OTP_URI_LABEL_REQUIRED`, …) pass through unchanged; the CLI adds `OTP_USAGE` (exit 2), `OTP_SEED_FILE_UNREADABLE`, `OTP_SEED_TOO_LARGE`, `OTP_OUT_EXISTS`, `OTP_STDIN_UNREADABLE` and `OTP_CLI_ERROR` (exit 1).
 
 ## Status reporting
 
@@ -159,18 +205,18 @@ formatStatus(describeUsers(states), { configured: true, unlockCommand: "sudo my-
 
 Every deliberate rejection is an `OtpError` (an `Error` subclass) with a stable `code`:
 
-| `code`                                               | Raised by                                                                                           |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value.                             |
-| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                                                |
-| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                                                 |
-| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.                               |
-| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                                               |
-| `OTP_SEED_INVALID`                                   | `verifyCode` / `otpauthUri` — an empty, non-string or non-base32 seed.                              |
-| `OTP_SEED_BYTES_INVALID`                             | `newSeed` — a `seedBytes` below 16 (RFC 4226 §4 requires at least 128 bits).                        |
-| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                                                           |
-| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                                                     |
-| `OTP_NOW_INVALID`                                    | `describeUser` / `describeUsers` — a missing or non-finite `now` (the library never reads a clock). |
+| `code`                                               | Raised by                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value.                                                  |
+| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                                                                     |
+| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                                                                      |
+| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.                                                    |
+| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                                                                    |
+| `OTP_SEED_INVALID`                                   | `verifyCode` / `currentCode` / `otpauthUri` — an empty, non-string or non-base32 seed (a zero-byte key counts as empty). |
+| `OTP_SEED_BYTES_INVALID`                             | `newSeed` — a `seedBytes` below 16 (RFC 4226 §4 requires at least 128 bits).                                             |
+| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                                                                                |
+| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                                                                          |
+| `OTP_NOW_INVALID`                                    | `describeUser` / `describeUsers` — a missing or non-finite `now` (the library never reads a clock).                      |
 
 Messages are human-readable and safe to log: they never contain a code, a seed or anything derived from them.
 

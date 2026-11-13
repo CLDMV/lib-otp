@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
+ *	@Last modified time: 2026-11-12T23:15:06-08:00 (1794554106)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -15,16 +15,16 @@
 
 /**
  * Enrolment: a new seed, the otpauth URI an authenticator app imports, the QR code for
- * it, and the code verifier the host runs before telling the machine what happened. A
- * broken seed THROWS — a config error must never read as "no match" and lock everyone
- * out.
+ * it, the code verifier the host runs before telling the machine what happened, and the
+ * current-code view of a seed. A broken seed THROWS — a config error must never read as
+ * "no match" and lock everyone out.
  */
 
 import { randomBytes } from "node:crypto";
 import QRCode from "qrcode";
 import { OtpError } from "./errors.mjs";
 import { DEFAULTS } from "./options.mjs";
-import { base32Decode, base32Encode, matchStep } from "./totp.mjs";
+import { base32Decode, base32Encode, matchStep, totpAt } from "./totp.mjs";
 
 /**
  * A new TOTP seed: `seedBytes` random bytes as unpadded base32 (20 bytes → 32
@@ -135,4 +135,29 @@ export function verifyCode(seed, code, now, config = DEFAULTS) {
 	}
 	if (key.length === 0) throw new OtpError("OTP_SEED_INVALID", "verifyCode: the seed is empty");
 	return matchStep(key, code, now, config.skewSteps, config.digits, config.algorithm, config.periodSeconds);
+}
+
+/**
+ * The code a seed generates at `now` — the one an authenticator app would display at
+ * that instant, with no skew window. It shares `verifyCode`'s decode and its refusals
+ * (a broken seed THROWS, never a code for garbage), so a display path can never accept
+ * a seed the verifier would refuse. Take the machine config — not loose options — so it
+ * can't disagree with the machine.
+ * @param {string} seed The base32 seed (hosts pass the trimmed stored seed).
+ * @param {number} now Ms.
+ * @param {import("./options.mjs").OtpMachineConfig} [config] Machine config; `digits`, `periodSeconds` and `algorithm` are read.
+ * @returns {string} The zero-padded code.
+ */
+export function currentCode(seed, now, config = DEFAULTS) {
+	if (typeof seed !== "string" || seed.length === 0)
+		throw new OtpError("OTP_SEED_INVALID", "currentCode: seed must be a non-empty base32 string");
+	let key;
+	try {
+		key = base32Decode(seed);
+	} catch (err) {
+		// The only thrower is our own base32Decode, whose message says exactly what is wrong.
+		throw new OtpError("OTP_SEED_INVALID", `currentCode: the seed is not valid base32: ${err.message}`);
+	}
+	if (key.length === 0) throw new OtpError("OTP_SEED_INVALID", "currentCode: the seed is empty");
+	return totpAt(key, now, config.digits, config.algorithm, config.periodSeconds);
 }
