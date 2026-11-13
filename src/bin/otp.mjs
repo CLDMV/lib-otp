@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:19:58-08:00 (1794554398)
+ *	@Last modified time: 2026-11-12T23:25:20-08:00 (1794554720)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -22,8 +22,8 @@
  * The seed never travels as a command-line argument (shell history and `ps` would
  * expose it): every subcommand that takes a seed reads it from `--seed-file <path>` or
  * stdin. A terminal on stdin is never read — that is a usage error, not a prompt. A
- * seed file is opened O_NOFOLLOW (a symlink is refused) and refused when readable by
- * group/other; a seed over 1 KiB is refused outright.
+ * seed file is opened O_NOFOLLOW (a symlink is refused) and produces a warning when
+ * readable by group/other; a seed over 1 KiB is refused outright.
  *
  * Everything is built for testing: `run(argv, io)` returns the exit code and takes an
  * injectable I/O object (streams, seed-file reader, exclusive writer, the clock), and
@@ -76,8 +76,8 @@ Seed source:
   Every subcommand that takes a seed reads it from --seed-file <path> or from stdin
   (piped or redirected; "--seed-file -" reads stdin too). A terminal is never read:
   with no --seed-file and a TTY on stdin, that is a usage error. A seed file may not
-  be a symlink (O_NOFOLLOW), is refused when readable by group or other, and a seed
-  over 1 KiB is refused.
+  be a symlink (O_NOFOLLOW), produces a warning when readable by group or other, and
+  a seed over 1 KiB is refused.
 
 Global options:
   --json          One JSON object on stdout (errors too, with a nonzero exit).
