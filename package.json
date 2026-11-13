@@ -104,5 +104,9 @@
 		"tsup": "^9.0.0",
 		"typescript": "^6.0.3",
 		"vitest": "^5.1.0"
+	},
+	"overrides": {
+		"katex": ">=0.19.1 <1.0.0",
+		"minimatch": "^11.0.3"
 	}
 }

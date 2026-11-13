@@ -6,7 +6,7 @@
 #	@Email: <Shinrai@users.noreply.github.com>
 #	-----
 #	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
-#	@Last modified time: 2026-11-12T18:03:02-08:00 (1794535382)
+#	@Last modified time: 2026-11-12T18:22:02-08:00 (1794536522)
 #	-----
 #	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
@@ -71,6 +71,11 @@ updates:
       open-pull-requests-limit: 5
       commit-message:
           prefix: "deps"
+      # The fleet stays on typescript ^6 until 7.1 — ignore majors 7+ so
+      # Dependabot doesn't open a bump the fleet can't take yet.
+      ignore:
+          - dependency-name: "typescript"
+            versions: [">=7"]
       groups:
           # vitest and @vitest/coverage-v8 (and other @vitest/* packages) peer
           # each other EXACTLY, so a partial bump (e.g. vitest to 5.0.0 while
