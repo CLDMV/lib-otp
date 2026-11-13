@@ -7,13 +7,14 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T18:03:02-08:00 (1794535382)
+ *	@Last modified time: 2026-11-12T18:22:02-08:00 (1794536522)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
  */
 
-import { defineConfig } from "vitest/config";
+import { defineConfig, mergeConfig } from "vitest/config";
+import { devCondition } from "@cldmv/configs/vitest.config.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -21,26 +22,36 @@ import path from "node:path";
 // matter what cwd vitest is invoked from.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export default defineConfig({
-	root,
-	test: {
-		include: ["tests/**/*.test.vitest.mjs"],
-		exclude: ["node_modules"],
-		environment: "node",
-		testTimeout: 30000,
-		// "dot" keeps CI logs to one character per test file instead of a full
-		// "RUN vX.Y.Z" + per-file pass/fail block for every file — vitest's
-		// non-interactive fallback (no TTY to redraw) otherwise reprints that
-		// whole block per file on top of the final aggregate summary, which
-		// dominates the log on a suite this size. The final "Test Files X
-		// passed" / "Tests Y passed" summary is unaffected — every built-in
-		// reporter prints it regardless of per-test verbosity.
-		reporters: ["dot"],
-		coverage: {
-			provider: "v8",
-			include: ["src/**"],
-			exclude: ["**/*.json", "tests/**"],
-			reporter: ["text", "html", "json-summary", "json"]
+// Wire the `otp-dev` condition (exports["."].otp-dev → src/) into resolution and
+// the test process, so tests importing the package by name hit src/ and the CJS
+// shim can require() the ESM sibling. devCondition() reads the condition name
+// from package.json and sets resolve.conditions, ssr.resolve.conditions and
+// test.execArgv (--conditions=otp-dev).
+const dev = devCondition({ root });
+
+export default mergeConfig(
+	dev,
+	defineConfig({
+		root,
+		test: {
+			include: ["tests/**/*.test.vitest.mjs"],
+			exclude: ["node_modules"],
+			environment: "node",
+			testTimeout: 30000,
+			// "dot" keeps CI logs to one character per test file instead of a full
+			// "RUN vX.Y.Z" + per-file pass/fail block for every file — vitest's
+			// non-interactive fallback (no TTY to redraw) otherwise reprints that
+			// whole block per file on top of the final aggregate summary, which
+			// dominates the log on a suite this size. The final "Test Files X
+			// passed" / "Tests Y passed" summary is unaffected — every built-in
+			// reporter prints it regardless of per-test verbosity.
+			reporters: ["dot"],
+			coverage: {
+				provider: "v8",
+				include: ["src/**"],
+				exclude: ["**/*.json", "tests/**"],
+				reporter: ["text", "html", "json-summary", "json"]
+			}
 		}
-	}
-});
+	})
+);
