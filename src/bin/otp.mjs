@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:18:27-08:00 (1794554307)
+ *	@Last modified time: 2026-11-12T23:19:58-08:00 (1794554398)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -298,14 +298,17 @@ function parseArgs(argv, allowedFlags, usage) {
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--json") {
+			if (opts.json !== undefined) fail(`option "${arg}" given more than once`);
 			opts.json = true;
 			continue;
 		}
 		if (arg === "--help" || arg === "-h") {
+			if (opts.help !== undefined) fail(`option "${arg}" given more than once`);
 			opts.help = true;
 			continue;
 		}
 		if (arg === "--version" || arg === "-V") {
+			if (opts.version !== undefined) fail(`option "${arg}" given more than once`);
 			opts.version = true;
 			continue;
 		}
@@ -318,6 +321,7 @@ function parseArgs(argv, allowedFlags, usage) {
 			const raw = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
 			const flag = FLAG_ALIASES[raw] ?? raw;
 			if (!allowedFlags.includes(flag)) fail(`unknown option "--${raw}"`);
+			if (opts[flag] !== undefined) fail(`option "--${raw}" given more than once`);
 			if (VALUELESS_FLAGS.has(flag)) {
 				if (eq !== -1) fail(`option "--${raw}" takes no value`);
 				opts[flag] = true;
@@ -531,6 +535,18 @@ async function runUri(opts, io, config, seed, warnings) {
 }
 
 /**
+ * The QR file format a `--out` path selects — a usage error for anything else. Checked
+ * before the seed is read, so a bad extension fails without touching the seed at all.
+ * @param {string} out
+ * @returns {"png" | "svg"}
+ */
+function qrFormat(out) {
+	const format = /\.png$/i.test(out) ? "png" : /\.svg$/i.test(out) ? "svg" : undefined;
+	if (!format) throw new UsageError(`--out must be a .png or .svg file (got "${out}")`, COMMAND_USAGE.qr);
+	return format;
+}
+
+/**
  * `otp qr` — the URI as a terminal QR, or a real .png / .svg file (the CLI is the only
  * place in the package allowed to touch the filesystem).
  * @returns {Promise<number>} The exit code.
@@ -539,8 +555,7 @@ async function runQr(opts, io, config, seed, warnings) {
 	const uri = otpauthUri(seed, undefined, undefined, config);
 	if (opts.out !== undefined) {
 		const out = /** @type {string} */ (opts.out);
-		const format = /\.png$/i.test(out) ? "png" : /\.svg$/i.test(out) ? "svg" : undefined;
-		if (!format) throw new UsageError(`--out must be a .png or .svg file (got "${out}")`, COMMAND_USAGE.qr);
+		const format = qrFormat(out);
 		const data = format === "png" ? await renderQr(uri, { format: "png-buffer" }) : await renderQr(uri, { format: "svg" });
 		try {
 			await io.writeExclusive(out, data, { force: opts.force === true });
@@ -607,7 +622,8 @@ async function dispatch(argv, io) {
 			io.stdout.write(opts.json ? `${JSON.stringify({ name, version })}\n` : `${name} v${version}\n`);
 			return 0;
 		}
-		if (positional.length > 0) throw new UsageError(`unknown subcommand "${first}"`, undefined, opts);
+		if (positional.length > 0)
+			throw new UsageError(`flags go after the subcommand — try "otp ${positional.join(" ")} ${first}"`, undefined, opts);
 		throw new UsageError("a subcommand is required: seed, uri, qr, code or verify", undefined, opts);
 	}
 	const flags = COMMAND_FLAGS[first];
@@ -632,6 +648,8 @@ async function dispatch(argv, io) {
 		// `return await` on purpose: a bare `return promise` inside try escapes the catch
 		// below (the async function awaits it after the try has already completed).
 		if (first === "seed") return await runSeed(opts, io, config);
+		// A bad --out extension is a usage error before the seed is read at all.
+		if (first === "qr" && opts.out !== undefined) qrFormat(/** @type {string} */ (opts.out));
 		// Every other subcommand needs a seed, which never comes from the command line.
 		const { seed, warnings } = await readSeed(opts, io, COMMAND_USAGE[first]);
 		if (first === "uri") return await runUri(opts, io, config, seed, warnings);
@@ -640,7 +658,7 @@ async function dispatch(argv, io) {
 		return await runVerify(opts, io, config, seed, warnings, /** @type {string} */ (positional[0]));
 	} catch (err) {
 		if (err instanceof UsageError) {
-			if (err.opts === undefined) err.opts = opts;
+			err.opts = opts;
 			throw err;
 		}
 		if (err instanceof OtpError) {
@@ -670,16 +688,17 @@ export async function run(argv, io = defaultIo()) {
 	try {
 		return await dispatch(argv, io);
 	} catch (err) {
-		const json = (err instanceof UsageError || err instanceof OtpError) && err.opts?.json === true;
+		// Every error escaping dispatch carries the options its command line parsed, and
+		// dispatch normalizes anything that is not a UsageError/OtpError into an
+		// OtpError("OTP_CLI_ERROR") — so the mode and the message are settled here.
+		const json = err.opts?.json === true;
 		if (err instanceof UsageError) {
 			if (json) io.stdout.write(`${JSON.stringify({ error: { code: "OTP_USAGE", message: err.message } })}\n`);
 			else io.stderr.write(`otp: ${err.message}\n\n${err.usage ?? GENERAL_USAGE}`);
 			return 2;
 		}
-		const code = err instanceof OtpError ? err.code : "OTP_CLI_ERROR";
-		const message = err instanceof Error ? err.message : String(err);
-		if (json) io.stdout.write(`${JSON.stringify({ error: { code, message } })}\n`);
-		else io.stderr.write(`otp: ${message}\n`);
+		if (json) io.stdout.write(`${JSON.stringify({ error: { code: err.code, message: err.message } })}\n`);
+		else io.stderr.write(`otp: ${err.message}\n`);
 		return 1;
 	}
 }

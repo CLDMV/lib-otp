@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:18:28-08:00 (1794554308)
+ *	@Last modified time: 2026-11-12T23:19:59-08:00 (1794554399)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -481,6 +481,45 @@ describe("help and version under --json", () => {
 		const t = io();
 		await expect(run(["code", "-V", "--json"], t)).resolves.toBe(0);
 		expect(JSON.parse(text(t.out))).toEqual({ name, version });
+	});
+});
+
+describe("repeated flags are a usage error", () => {
+	it.each([
+		[["code", "--digits", "6", "--digits", "8"]],
+		[["code", "--json", "--json"]],
+		[["code", "-h", "--help"]],
+		[["code", "-V", "--version"]],
+		[["qr", "--label", "a", "--force", "--force"]]
+	])("rejects %j", async (argv) => {
+		const t = io({ input: SEED });
+		await expect(run(argv, t)).resolves.toBe(2);
+		// The message lands on stderr in text mode and on stdout as JSON when --json was
+		// parsed before the repetition — the mode the parse produced.
+		expect(text(t.out) + text(t.err)).toContain("given more than once");
+	});
+});
+
+describe("flags go after the subcommand", () => {
+	it("says so (with the corrected spelling) when a flag precedes the subcommand", async () => {
+		const t = io();
+		await expect(run(["--json", "uri"], t)).resolves.toBe(2);
+		const everything = text(t.out) + text(t.err);
+		expect(everything).toContain("flags go after the subcommand");
+		expect(everything).toContain("otp uri --json");
+	});
+});
+
+describe("qr --out extension is checked before the seed is read", () => {
+	it("fails on a bad extension without touching the seed", async () => {
+		const t = io({
+			readSeedFile: async () => {
+				throw new Error("the seed must not be read");
+			}
+		});
+		await expect(run(["qr", "--out", "/x/qr.gif"], t)).resolves.toBe(2);
+		expect(text(t.err)).toContain("--out must be a .png or .svg file");
+		expect(text(t.err)).not.toContain("the seed is empty");
 	});
 });
 
