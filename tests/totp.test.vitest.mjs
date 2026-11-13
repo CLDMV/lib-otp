@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
+ *	@Last modified time: 2026-11-12T22:42:25-08:00 (1794552145)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -15,6 +15,7 @@
 
 import { describe, it, expect } from "vitest";
 import { base32Decode, base32Encode, hotp, matchStep, safeEqual, stepAt, totpAt } from "../src/totp.mjs";
+import { verifyCode } from "../src/enrol.mjs";
 
 // RFC 6238 appendix B: the SHA1 seed is the ASCII string "12345678901234567890", 8 digits.
 const RFC_KEY = Buffer.from("12345678901234567890", "ascii");
@@ -155,6 +156,14 @@ describe("matchStep", () => {
 		expect(matchStep(RFC_KEY, good.slice(1), now)).toBeUndefined();
 		expect(matchStep(RFC_KEY, "abcdef", now)).toBeUndefined();
 		expect(matchStep(RFC_KEY, `${good}0`, now)).toBeUndefined();
+	});
+
+	it("returns undefined for a non-string code (never a throw)", () => {
+		const seed = base32Encode(RFC_KEY);
+		for (const bad of [undefined, null, 123456, NaN, { code: 123456 }]) {
+			expect(matchStep(RFC_KEY, bad, now)).toBeUndefined();
+			expect(verifyCode(seed, bad, now)).toBeUndefined();
+		}
 	});
 
 	it("supports other skews and digit counts", () => {

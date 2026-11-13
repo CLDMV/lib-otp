@@ -33,11 +33,11 @@ node --conditions=lib-otp-dev -e 'import("@cldmv/lib-otp").then(m => console.log
 | `periodSeconds`     | `30`                                    | Seconds one TOTP step lasts.                                                                                                                                                                                                                                                                                                                  |
 | `algorithm`         | `"SHA1"`                                | HMAC algorithm (SHA1 is the only implemented one).                                                                                                                                                                                                                                                                                            |
 | `skewSteps`         | `1`                                     | Steps of clock skew accepted either side (bounded 0–2).                                                                                                                                                                                                                                                                                       |
-| `seedBytes`         | `20`                                    | Random bytes in a new seed.                                                                                                                                                                                                                                                                                                                   |
+| `seedBytes`         | `20`                                    | Random bytes in a new seed (at least 16 — RFC 4226 §4 requires a seed of at least 128 bits).                                                                                                                                                                                                                                                  |
 | `uriIssuer`         | `"gh-broker"`                           | Issuer in the otpauth URI.                                                                                                                                                                                                                                                                                                                    |
 | `uriLabel`          | _(caller-supplied)_                     | Account label for the URI — no default.                                                                                                                                                                                                                                                                                                       |
-| `refuseReused`      | `true`                                  | Whether a spent code is refused without counting as a guess.                                                                                                                                                                                                                                                                                  |
-| `windowEnabled`     | `true`                                  | Whether accepting a code opens a reuse window. `false` opens no new windows; open ones serve until expiry.                                                                                                                                                                                                                                    |
+| `refuseReused`      | `true`                                  | Whether a spent code is refused without counting as a guess. **Unsafe to turn off**: a sniffed code can then be replayed within the skew window, and every replay opens a fresh reuse window. Kept only for hosts that explicitly want that behavior.                                                                                         |
+| `windowEnabled`     | `true`                                  | Whether accepting a code opens a reuse window. `false` opens no new windows (the `opened` outcome's `window`/`expiresAt` are then null); open ones serve until expiry.                                                                                                                                                                        |
 | `windowSeconds`     | `300`                                   | Seconds an open window stays usable (fixed, no renewal).                                                                                                                                                                                                                                                                                      |
 | `maxFailures`       | `5`                                     | Bad codes that start a short lockout.                                                                                                                                                                                                                                                                                                         |
 | `failureCounting`   | `{ mode: "since-accept-or-lockout" }`   | How bad codes count: a plain counter reset on accept or lockout, or `{ mode: "window", windowMs }` — failures within a rolling `windowMs` (backed by `failureTimes`, maintained only in window mode).                                                                                                                                         |
@@ -103,17 +103,17 @@ Missing and malformed codes are host input validation and never reach the machin
 
 ### Outcomes (reason codes, not prose)
 
-| `outcome.reason`                          | Fields                           | Meaning                                                                                                                                               |
-| ----------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"opened"`                                | `counter`, `window`, `expiresAt` | A code was accepted; `{ id, expiresAt }` was appended to `windows`. With `windowEnabled: false` no window is appended — don't map the code for reuse. |
-| `"window"`                                | `window`                         | A window-use was accepted (the window is not consumed).                                                                                               |
-| `"bad-code"`                              | `failures`                       | Counted; no lockout started.                                                                                                                          |
-| `"locked-out"`                            | `failures`, `until`              | Counted AND this code started a short lockout (the count reset to 0).                                                                                 |
-| `"hard-locked-now"`                       | `since`, `lockouts`              | Counted AND this code triggered the hard lock.                                                                                                        |
-| `"locked"`                                | `until`                          | Refused while short-locked — not counted, nothing consumed or reset.                                                                                  |
-| `"hard-locked"`                           | `since`                          | Refused while hard-locked.                                                                                                                            |
-| `"spent-code"`                            | —                                | The counter is at or below the spend marker — not counted.                                                                                            |
-| `"unlocked"` / `"cleared"` / `"no-entry"` | —                                | admin-unlock's three outcomes: a hard-locked entry existed / an entry existed but wasn't hard-locked / nothing to clear.                              |
+| `outcome.reason`                          | Fields                           | Meaning                                                                                                                                                                                                   |
+| ----------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"opened"`                                | `counter`, `window`, `expiresAt` | A code was accepted; `{ id, expiresAt }` was appended to `windows`. With `windowEnabled: false` no window exists — `window` and `expiresAt` are null, so a code → window map can never pick up a phantom. |
+| `"window"`                                | `window`                         | A window-use was accepted (the window is not consumed).                                                                                                                                                   |
+| `"bad-code"`                              | `failures`                       | Counted; no lockout started.                                                                                                                                                                              |
+| `"locked-out"`                            | `failures`, `until`              | Counted AND this code started a short lockout (`failures` is the count that triggered it — `maxFailures`; the stored count resets to 0).                                                                  |
+| `"hard-locked-now"`                       | `since`, `lockouts`              | Counted AND this code triggered the hard lock.                                                                                                                                                            |
+| `"locked"`                                | `until`                          | Refused while short-locked — not counted, nothing consumed or reset.                                                                                                                                      |
+| `"hard-locked"`                           | `since`                          | Refused while hard-locked.                                                                                                                                                                                |
+| `"spent-code"`                            | —                                | The counter is at or below the spend marker — not counted.                                                                                                                                                |
+| `"unlocked"` / `"cleared"` / `"no-entry"` | —                                | admin-unlock's three outcomes: a hard-locked entry existed / an entry existed but wasn't hard-locked / nothing to clear.                                                                                  |
 
 The machine enforces its own lock: `code-ok`, `code-bad` and `window-use` while `lockStatus(state, now) !== "clear"` return the `locked`/`hard-locked` outcome without counting, consuming or resetting anything. `lockStatus` itself is a read-only helper. `tick` prunes expired windows and never touches `hardLock` or `failures`; only admin-unlock clears a hard lock.
 
@@ -131,11 +131,12 @@ The machine enforces its own lock: `code-ok`, `code-bad` and `window-use` while 
 import { newSeed, otpauthUri, renderQr, verifyCode } from "@cldmv/lib-otp";
 
 const seed = newSeed(); // 20 random bytes as base32 (32 chars); { seedBytes, random } injectable
-const uri = otpauthUri(seed, "ada@example.com", "gh-broker", config);
+const uri = otpauthUri(seed, "ada@example.com", "gh-broker", config); // label/issuer optional — they default to the config's uriLabel/uriIssuer
 console.log(await renderQr(uri)); // terminal QR
 ```
 
-- `verifyCode(seed, code, now, config)` returns the TOTP step the code matches (skew-aware, digit-count from the config), or `undefined` when it matches none. A malformed code never matches; **a broken seed throws** — a config error must never read as "no match" and lock everyone out. Take the config — not loose options — so the verifier can't disagree with the machine.
+- `verifyCode(seed, code, now, config)` returns the TOTP step the code matches (skew-aware, digit-count from the config), or `undefined` when it matches none. A malformed code — including a non-string one — never matches; **a broken seed throws** — a config error must never read as "no match" and lock everyone out. Take the config — not loose options — so the verifier can't disagree with the machine.
+- `otpauthUri(seed, label?, issuer?, config)` validates the seed as base32 before anything is interpolated (a raw seed like `"not&valid"` would otherwise inject a URI parameter) and defaults `label`/`issuer` to the config's `uriLabel`/`uriIssuer` when omitted (explicit arguments win).
 - `renderQr(uri, { format })` renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic.
 
 ## Status reporting
@@ -158,16 +159,17 @@ formatStatus(describeUsers(states), { configured: true, unlockCommand: "sudo my-
 
 Every deliberate rejection is an `OtpError` (an `Error` subclass) with a stable `code`:
 
-| `code`                                               | Raised by                                                               |
-| ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value. |
-| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                    |
-| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                     |
-| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.   |
-| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                   |
-| `OTP_SEED_INVALID`                                   | `verifyCode` / `otpauthUri` — an empty, non-string or non-base32 seed.  |
-| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                               |
-| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                         |
+| `code`                                               | Raised by                                                                    |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value.      |
+| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                         |
+| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                          |
+| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.        |
+| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                        |
+| `OTP_SEED_INVALID`                                   | `verifyCode` / `otpauthUri` — an empty, non-string or non-base32 seed.       |
+| `OTP_SEED_BYTES_INVALID`                             | `newSeed` — a `seedBytes` below 16 (RFC 4226 §4 requires at least 128 bits). |
+| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                                    |
+| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                              |
 
 Messages are human-readable and safe to log: they never contain a code, a seed or anything derived from them.
 

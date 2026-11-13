@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
+ *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -100,11 +100,13 @@ export function safeEqual(a, b) {
 /**
  * The step a code is valid for at `nowMs`, accepting `skew` steps either side, or
  * undefined when it matches none. Every candidate step is compared (no early exit), and
- * each comparison is constant-time. A malformed code (not exactly `digits` digits) never
- * matches. `algorithm` and `periodSeconds` must be the machine config's values — a
+ * each comparison is constant-time. A malformed code (not exactly `digits` digits — or
+ * not a string at all) never matches. `algorithm` and `periodSeconds` must be the machine
+ * config's values — a
  * verifier that disagrees with the authenticator's parameters matches nothing.
  */
 export function matchStep(key, code, nowMs, skew = 1, digits = 6, algorithm = "SHA1", periodSeconds = STEP_SECONDS) {
+	if (typeof code !== "string") return undefined;
 	if (!new RegExp(`^\\d{${digits}}$`).test(code)) return undefined;
 	const now = stepAt(nowMs, periodSeconds);
 	let matched;

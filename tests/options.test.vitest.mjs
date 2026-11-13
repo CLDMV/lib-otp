@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
+ *	@Last modified time: 2026-11-12T22:42:25-08:00 (1794552145)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -130,6 +130,24 @@ describe("parseOtpOptions", () => {
 		expect(() => parseOtpOptions({ maxFailures: 3, maxFaiulres: 4 })).toThrow(/unknown option "maxFaiulres"/);
 	});
 
+	it("rejects unknown keys inside the nested option objects too", () => {
+		expect(() => parseOtpOptions({ failureCounting: { mode: "window", windowMs: 60_000, windoMs: 1 } })).toThrow(
+			/unknown option "failureCounting\.windoMs"/
+		);
+		expect(() => parseOtpOptions({ lockoutEscalation: { factor: 2, maxSeconds: 600, maxSeconsd: 1 } })).toThrow(
+			/unknown option "lockoutEscalation\.maxSeconsd"/
+		);
+		expect(() => parseOtpOptions({ hardLockTrigger: { lockouts: 3, windowMs: 86_400_000, windoMs: 1 } })).toThrow(
+			/unknown option "hardLockTrigger\.windoMs"/
+		);
+		try {
+			parseOtpOptions({ failureCounting: { mode: "window", windowMs: 60_000, extra: 1 } });
+		} catch (err) {
+			expect(err).toBeInstanceOf(OtpError);
+			expect(err.code).toBe("OTP_OPTIONS_INVALID");
+		}
+	});
+
 	it.each([
 		["digits below the bound", { digits: 5 }, /digits must be an integer between 6 and 8/],
 		["digits above the bound", { digits: 9 }, /digits must be an integer between 6 and 8/],
@@ -143,8 +161,10 @@ describe("parseOtpOptions", () => {
 		["skewSteps above the bound", { skewSteps: 3 }, /skewSteps must be an integer between 0 and 2/],
 		["skewSteps negative", { skewSteps: -1 }, /skewSteps must be an integer between 0 and 2/],
 		["skewSteps fractional", { skewSteps: 1.5 }, /skewSteps must be an integer between 0 and 2/],
-		["seedBytes zero", { seedBytes: 0 }, /seedBytes must be a positive integer/],
-		["seedBytes negative", { seedBytes: -20 }, /seedBytes must be a positive integer/],
+		["seedBytes zero", { seedBytes: 0 }, /seedBytes must be an integer of at least 16/],
+		["seedBytes negative", { seedBytes: -20 }, /seedBytes must be an integer of at least 16/],
+		["seedBytes just below the bound", { seedBytes: 15 }, /seedBytes must be an integer of at least 16/],
+		["seedBytes fractional", { seedBytes: 20.5 }, /seedBytes must be an integer of at least 16/],
 		["empty uriIssuer", { uriIssuer: "" }, /uriIssuer must be a non-empty string/],
 		["uriIssuer as a number", { uriIssuer: 5 }, /uriIssuer must be a non-empty string/],
 		["empty uriLabel", { uriLabel: "" }, /uriLabel must be a non-empty string when given/],

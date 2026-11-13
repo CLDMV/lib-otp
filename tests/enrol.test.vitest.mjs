@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
+ *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -96,10 +96,20 @@ describe("newSeed", () => {
 		expect(base32Decode(seed).length).toBe(20);
 	});
 
-	it("honours seedBytes and an injectable random source", () => {
-		expect(newSeed({ seedBytes: 10 })).toMatch(/^[A-Z2-7]{16}$/);
+	it("honours seedBytes (bounded at 16 minimum) and an injectable random source", () => {
+		expect(newSeed({ seedBytes: 16 })).toMatch(/^[A-Z2-7]{26}$/);
 		expect(newSeed({ random: (n) => Buffer.alloc(n, 0xff) })).toBe(base32Encode(Buffer.alloc(20, 0xff)));
-		expect(newSeed({ seedBytes: 1, random: (n) => Buffer.alloc(n, 1) })).toBe(base32Encode(Buffer.alloc(1, 1)));
+		expect(newSeed({ seedBytes: 16, random: (n) => Buffer.alloc(n, 1) })).toBe(base32Encode(Buffer.alloc(16, 1)));
+	});
+
+	it.each([0, 1, 15, -20, 2.5])("rejects a seedBytes below 16 (got %s) — RFC 4226 §4 requires 128 bits", (seedBytes) => {
+		expect(() => newSeed({ seedBytes })).toThrow(OtpError);
+		try {
+			newSeed({ seedBytes });
+		} catch (err) {
+			expect(err.code).toBe("OTP_SEED_BYTES_INVALID");
+			expect(err.message).toMatch(/at least 16/);
+		}
 	});
 
 	it("makes different seeds on repeated calls", () => {
@@ -145,6 +155,30 @@ describe("otpauthUri", () => {
 		expect(() => otpauthUri("", "label", "issuer")).toThrow(/seed must be a non-empty base32 string/);
 		expect(() => otpauthUri(SEED, "", "issuer")).toThrow(/label must be a non-empty string/);
 		expect(() => otpauthUri(SEED, "label", "")).toThrow(/issuer must be a non-empty string/);
+	});
+
+	it("validates the seed as base32 before anything is interpolated (a raw seed must not inject a URI parameter)", () => {
+		for (const bad of ["not&valid", "abc def", "GEZDGNBV&secret=x"]) {
+			expect(() => otpauthUri(bad, "label", "issuer")).toThrow(OtpError);
+			try {
+				otpauthUri(bad, "label", "issuer");
+			} catch (err) {
+				expect(err.code).toBe("OTP_SEED_INVALID");
+				expect(err.message).toMatch(/not valid base32/);
+			}
+		}
+		// The validation runs before the label/issuer checks:
+		expect(() => otpauthUri("not&valid", "", "")).toThrow(/not valid base32/);
+	});
+
+	it("defaults label and issuer to the config's uriLabel/uriIssuer when omitted", () => {
+		const c = parseOtpOptions({ uriIssuer: "quack", uriLabel: "ada@example.com" });
+		expect(otpauthUri(SEED, undefined, undefined, c)).toBe(otpauthUri(SEED, "ada@example.com", "quack", c));
+		expect(otpauthUri(SEED, undefined, "explicit-issuer", c)).toBe(otpauthUri(SEED, "ada@example.com", "explicit-issuer", c));
+		expect(otpauthUri(SEED, "explicit-label", undefined, c)).toBe(otpauthUri(SEED, "explicit-label", "quack", c));
+		// A config without a uriLabel leaves the label required:
+		expect(() => otpauthUri(SEED, undefined, undefined, config)).toThrow(OtpError);
+		expect(() => otpauthUri(SEED, undefined, undefined, config)).toThrow(/label must be a non-empty string/);
 	});
 });
 

@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
+ *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -236,14 +236,14 @@ export function compactPerson(state, now, config) {
 
 /**
  * @typedef {Object} OutcomeOpened
- * @property {"opened"} reason A code was accepted; `{ id, expiresAt }` was appended to the windows.
+ * @property {"opened"} reason A code was accepted; with `windowEnabled` true `{ id, expiresAt }` was appended to the windows.
  * @property {number} counter The accepted step.
- * @property {string} window The window id (the caller's `windowId`, echoed).
- * @property {string} expiresAt ISO time the window closes.
+ * @property {string | null} window The window id (the caller's `windowId`, echoed) — null when `windowEnabled` is false (no window exists; the host must not map the code for reuse).
+ * @property {string | null} expiresAt ISO time the window closes — null when `windowEnabled` is false.
  */
 /** @typedef {{ reason: "window", window: string }} OutcomeWindow A window-use was accepted. */
 /** @typedef {{ reason: "bad-code", failures: number }} OutcomeBadCode Counted; no lockout started. */
-/** @typedef {{ reason: "locked-out", failures: number, until: string }} OutcomeLockedOut Counted AND this code started a short lockout. */
+/** @typedef {{ reason: "locked-out", failures: number, until: string }} OutcomeLockedOut Counted AND this code started a short lockout (`failures` is the count that triggered it — `maxFailures`). */
 /** @typedef {{ reason: "hard-locked-now", since: string, lockouts: number }} OutcomeHardLockedNow Counted AND this code triggered the hard lock. */
 /** @typedef {{ reason: "locked", until: string }} OutcomeLocked Refused while short-locked — nothing was counted. */
 /** @typedef {{ reason: "hard-locked", since: string }} OutcomeHardLocked Refused while hard-locked. */
@@ -352,8 +352,8 @@ function codeOk(state, event, config) {
 
 	// Accept: the counter is fresh. Reset the guess budget, record the spend, open the
 	// window (when windows are enabled — with windowEnabled false no window is appended
-	// and the host must not map the code for reuse; the outcome's window fields are
-	// informational only).
+	// and the outcome's window fields are null, so a host's code → window map can never
+	// pick up a window that does not exist).
 	const expiresAtMs = event.now + config.windowSeconds * 1000;
 	const windows = config.windowEnabled ? [...working.windows, { id: event.windowId, expiresAt: expiresAtMs }] : working.windows;
 	const next = freezePerson({
@@ -364,10 +364,10 @@ function codeOk(state, event, config) {
 		lastAcceptedPeriod: config.periodSeconds,
 		windows
 	});
-	return {
-		state: next,
-		outcome: { reason: "opened", counter: event.counter, window: event.windowId, expiresAt: new Date(expiresAtMs).toISOString() }
-	};
+	const outcome = config.windowEnabled
+		? { reason: "opened", counter: event.counter, window: event.windowId, expiresAt: new Date(expiresAtMs).toISOString() }
+		: { reason: "opened", counter: event.counter, window: null, expiresAt: null };
+	return { state: next, outcome };
 }
 
 /**
@@ -421,7 +421,7 @@ function startLockout(state, now, config) {
 	const hardLock = config.hardLockEnabled && n >= config.hardLockTrigger.lockouts ? { since: at, lockouts: n } : null;
 	const next = freezePerson({ ...state, failures: 0, failureTimes: [], lockedUntil: until, lockouts, hardLock });
 	if (hardLock !== null) return { state: next, outcome: { reason: "hard-locked-now", since: hardLock.since, lockouts: n } };
-	return { state: next, outcome: { reason: "locked-out", failures: 0, until } };
+	return { state: next, outcome: { reason: "locked-out", failures: config.maxFailures, until } };
 }
 
 /**
@@ -461,6 +461,9 @@ function adminUnlock(state, event, config) {
 	// period's units first (the same re-base a code-ok applies), then the spend is a
 	// max with it — an unlock must never lower a marker a prior accept already raised.
 	const had = state.hardLock !== null || state.failures > 0 || state.lockedUntil !== null || state.lockouts.length > 0;
+	// Nothing to clear: no-entry means NO state change — in particular the spend is
+	// skipped, so an unlock on a fresh record moves nothing (row 16 of the outcome table).
+	if (!had) return { state, outcome: { reason: "no-entry" } };
 	let lastCounter = state.lastCounter;
 	let lastAcceptedPeriod = state.lastAcceptedPeriod;
 	if (config.spendOnUnlock) {
@@ -481,7 +484,7 @@ function adminUnlock(state, event, config) {
 		lastAcceptedPeriod,
 		windows: state.windows
 	});
-	const reason = /** @type {"unlocked" | "cleared" | "no-entry"} */ (state.hardLock !== null ? "unlocked" : had ? "cleared" : "no-entry");
+	const reason = /** @type {"unlocked" | "cleared"} */ (state.hardLock !== null ? "unlocked" : "cleared");
 	return { state: next, outcome: { reason } };
 }
 

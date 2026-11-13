@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
+ *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -116,10 +116,12 @@ describe("stepOtp — accept (code-ok)", () => {
 		]);
 	});
 
-	it("opens no window when windowEnabled is false, but still accepts and spends", () => {
+	it("opens no window when windowEnabled is false, but still accepts and spends (null window fields)", () => {
 		const noWindows = cfg({ windowEnabled: false });
 		const { state, outcome } = stepOtp(emptyPerson(), { kind: "code-ok", counter: C, windowId: "w1", now: NOW }, noWindows);
-		expect(outcome).toEqual({ reason: "opened", counter: C, window: "w1", expiresAt: iso(NOW + 5 * MIN) });
+		// The window fields are null — a host's code → window map must never pick up a
+		// window that does not exist.
+		expect(outcome).toEqual({ reason: "opened", counter: C, window: null, expiresAt: null });
 		expect(state.windows).toEqual([]);
 		expect(state.lastCounter).toBe(C);
 	});
@@ -249,7 +251,7 @@ describe("stepOtp — bad codes and lockouts", () => {
 			state = r.state;
 		}
 		const r = stepOtp(state, { kind: "code-bad", now: NOW + 5 }, config);
-		expect(r.outcome).toEqual({ reason: "locked-out", failures: 0, until: iso(NOW + 5 + 10 * MIN) });
+		expect(r.outcome).toEqual({ reason: "locked-out", failures: 5, until: iso(NOW + 5 + 10 * MIN) });
 		expect(r.state).toEqual({
 			failures: 0,
 			failureTimes: [],
@@ -273,7 +275,7 @@ describe("stepOtp — bad codes and lockouts", () => {
 			state = r.state;
 		}
 		last = stepOtp(state, { kind: "code-bad", now: NOW + 11 * MIN + 4 }, config);
-		expect(last.outcome).toEqual({ reason: "locked-out", failures: 0, until: iso(NOW + 11 * MIN + 4 + 10 * MIN) });
+		expect(last.outcome).toEqual({ reason: "locked-out", failures: 5, until: iso(NOW + 11 * MIN + 4 + 10 * MIN) });
 		expect(last.state.lockouts).toEqual([iso(NOW + 4), iso(NOW + 11 * MIN + 4)]);
 	});
 
@@ -321,7 +323,7 @@ describe("stepOtp — bad codes and lockouts", () => {
 		state = stepOtp(state, { kind: "code-bad", now: NOW }, c).state;
 		state = { ...state, lockedUntil: null };
 		const r = stepOtp(state, { kind: "code-bad", now: NOW + 2 * MIN }, c);
-		expect(r.outcome).toEqual({ reason: "locked-out", failures: 0, until: iso(NOW + 2 * MIN + 60_000) });
+		expect(r.outcome).toEqual({ reason: "locked-out", failures: 1, until: iso(NOW + 2 * MIN + 60_000) });
 		expect(r.state.hardLock).toBeNull();
 		expect(r.state.lockouts).toEqual([iso(NOW), iso(NOW + 2 * MIN)]);
 
@@ -363,7 +365,7 @@ describe("stepOtp — bad codes and lockouts", () => {
 		expect(r.state.failureTimes).toEqual([NOW - 30_000, NOW]);
 		state = r.state;
 		r = stepOtp(state, { kind: "code-bad", now: NOW + 1000 }, c);
-		expect(r.outcome).toEqual({ reason: "locked-out", failures: 0, until: iso(NOW + 1000 + 10 * MIN) });
+		expect(r.outcome).toEqual({ reason: "locked-out", failures: 3, until: iso(NOW + 1000 + 10 * MIN) });
 		expect(r.state.failureTimes).toEqual([]);
 	});
 
@@ -451,6 +453,17 @@ describe("stepOtp — window-use", () => {
 		expect(r.outcome).toBeUndefined();
 		expect(r.state.windows).toEqual([{ id: "live", expiresAt: NOW + MIN }]);
 	});
+
+	it("honours a non-default windowSeconds (the outcome's expiry and the window-use expiry follow it)", () => {
+		const c = cfg({ windowSeconds: 120 });
+		const { state, outcome } = stepOtp(emptyPerson(), { kind: "code-ok", counter: C, windowId: "w1", now: NOW }, c);
+		expect(outcome).toEqual({ reason: "opened", counter: C, window: "w1", expiresAt: iso(NOW + 120_000) });
+		// Usable up to the last ms inside the window, gone the moment it expires:
+		expect(stepOtp(state, { kind: "window-use", id: "w1", now: NOW + 120_000 - 1 }, c).outcome).toEqual({ reason: "window", window: "w1" });
+		const r = stepOtp(state, { kind: "window-use", id: "w1", now: NOW + 120_000 }, c);
+		expect(r.outcome).toBeUndefined();
+		expect(r.state.windows).toEqual([]);
+	});
 });
 
 describe("stepOtp — admin-unlock", () => {
@@ -489,9 +502,20 @@ describe("stepOtp — admin-unlock", () => {
 		expect(r.state.lockouts).toEqual([]);
 	});
 
-	it("reports no-entry for a person with nothing to clear", () => {
-		const r = stepOtp(emptyPerson(), { kind: "admin-unlock", by: "root", now: NOW }, config);
+	it("reports no-entry for a person with nothing to clear, with NO state change (the spend is skipped)", () => {
+		const state = emptyPerson();
+		const r = stepOtp(state, { kind: "admin-unlock", by: "root", now: NOW }, config);
 		expect(r.outcome).toEqual({ reason: "no-entry" });
+		expect(r.state).toBe(state); // the very same record — not even the spend marker moved
+	});
+
+	it("spends skew 0, 1 and 2 through admin-unlock", () => {
+		for (const skewSteps of [0, 1, 2]) {
+			const c = cfg({ skewSteps });
+			const r = stepOtp({ ...emptyPerson(), failures: 1 }, { kind: "admin-unlock", by: "root", now: NOW }, c);
+			expect(r.outcome.reason).toBe("cleared");
+			expect(r.state.lastCounter).toBe(Math.floor(NOW / 1000 / 30) + skewSteps);
+		}
 	});
 
 	it("clears a person whose only mark is an expired short lockout", () => {
@@ -549,8 +573,9 @@ describe("stepOtp — admin-unlock", () => {
 		// A marker of 100 under period 60 converts to 201 under period 30 — far ahead of
 		// the spend at 500 s (floor(500/30) + 1 = 17). The max keeps the conversion; the
 		// old spendThrough re-base would have dropped the marker from 100 to 17.
-		const state = { ...emptyPerson(), lastCounter: 100, lastAcceptedPeriod: 60 };
+		const state = { ...emptyPerson(), failures: 1, lastCounter: 100, lastAcceptedPeriod: 60 };
 		const r = stepOtp(state, { kind: "admin-unlock", by: "root", now: 500_000 }, cfg({ periodSeconds: 30 }));
+		expect(r.outcome.reason).toBe("cleared");
 		expect(r.state.lastCounter).toBe(201);
 		expect(r.state.lastAcceptedPeriod).toBe(30);
 	});
@@ -558,8 +583,9 @@ describe("stepOtp — admin-unlock", () => {
 	it("on a period mismatch a spend ahead of the converted marker wins", () => {
 		// Accepted under period 60 with marker 1 long ago; unlock at 1000 s under period
 		// 30: the spend (floor(1000/30) + 1 = 34) is ahead of the converted marker (3).
-		const state = { ...emptyPerson(), lastCounter: 1, lastAcceptedPeriod: 60 };
+		const state = { ...emptyPerson(), failures: 1, lastCounter: 1, lastAcceptedPeriod: 60 };
 		const r = stepOtp(state, { kind: "admin-unlock", by: "root", now: 1000_000 }, cfg({ periodSeconds: 30 }));
+		expect(r.outcome.reason).toBe("cleared");
 		expect(r.state.lastCounter).toBe(Math.floor(1000_000 / 1000 / 30) + 1);
 		expect(r.state.lastAcceptedPeriod).toBe(30);
 	});

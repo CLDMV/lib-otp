@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
+ *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -28,28 +28,43 @@ import { base32Decode, base32Encode, matchStep } from "./totp.mjs";
 
 /**
  * A new TOTP seed: `seedBytes` random bytes as unpadded base32 (20 bytes → 32
- * characters). `random` is injectable for tests.
+ * characters). `random` is injectable for tests. `seedBytes` must be an integer of at
+ * least 16 — RFC 4226 §4 requires a seed of at least 128 bits.
  * @param {{ seedBytes?: number, random?: (size: number) => Uint8Array }} [opts]
  * @returns {string}
  */
 export function newSeed({ seedBytes = DEFAULTS.seedBytes, random = randomBytes } = {}) {
+	if (!Number.isSafeInteger(seedBytes) || seedBytes < 16)
+		throw new OtpError(
+			"OTP_SEED_BYTES_INVALID",
+			"newSeed: seedBytes must be an integer of at least 16 (RFC 4226 §4 requires a seed of at least 128 bits)"
+		);
 	return base32Encode(random(seedBytes));
 }
 
 /**
  * The otpauth URI an authenticator app imports, with the config's algorithm, digit
- * count and period (so a host running 8 digits gets an 8-digit enrolment). Issuer and
- * label are percent-encoded; the label names the account (caller-supplied — there is no
- * default).
+ * count and period (so a host running 8 digits gets an 8-digit enrolment). The seed is
+ * validated as base32 before anything is interpolated — a raw seed like `"not&valid"`
+ * would otherwise inject a URI parameter. Issuer and label are percent-encoded; the
+ * label names the account. `label` and `issuer` default to the config's `uriLabel` /
+ * `uriIssuer` when omitted (explicit arguments win).
  * @param {string} seed The base32 seed.
- * @param {string} label The account the URI is for.
- * @param {string} issuer The issuer (app name) the authenticator shows.
- * @param {import("./options.mjs").OtpMachineConfig} [config] Machine config; only `digits`, `periodSeconds` and `algorithm` are read.
+ * @param {string} [label] The account the URI is for (defaults to the config's `uriLabel`).
+ * @param {string} [issuer] The issuer (app name) the authenticator shows (defaults to the config's `uriIssuer`).
+ * @param {import("./options.mjs").OtpMachineConfig} [config] Machine config; `digits`, `periodSeconds`, `algorithm`, `uriIssuer` and `uriLabel` are read.
  * @returns {string}
  */
 export function otpauthUri(seed, label, issuer, config = DEFAULTS) {
 	if (typeof seed !== "string" || seed.length === 0)
 		throw new OtpError("OTP_SEED_INVALID", "otpauthUri: seed must be a non-empty base32 string");
+	try {
+		base32Decode(seed);
+	} catch (err) {
+		throw new OtpError("OTP_SEED_INVALID", `otpauthUri: the seed is not valid base32: ${err.message}`);
+	}
+	if (label === undefined) label = config.uriLabel;
+	if (issuer === undefined) issuer = config.uriIssuer;
 	if (typeof label !== "string" || label.length === 0)
 		throw new OtpError("OTP_URI_LABEL_REQUIRED", "otpauthUri: label must be a non-empty string");
 	if (typeof issuer !== "string" || issuer.length === 0)

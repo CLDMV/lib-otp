@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
+ *	@Last modified time: 2026-11-12T22:42:24-08:00 (1794552144)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -36,11 +36,16 @@ export const DEFAULTS = Object.freeze({
 	algorithm: "SHA1",
 	/** Steps of clock skew accepted either side of the current one. */
 	skewSteps: 1,
-	/** Random bytes in a new seed. */
+	/** Random bytes in a new seed (at least 16 — RFC 4226 §4 requires a seed of at least 128 bits). */
 	seedBytes: 20,
 	/** Issuer in the otpauth URI. */
 	uriIssuer: "gh-broker",
-	/** Whether a reused (spent) code is refused without counting as a guess. */
+	/**
+	 * Whether a reused (spent) code is refused without counting as a guess. UNSAFE to
+	 * turn off: with it off, a sniffed code can be replayed within the skew window and
+	 * every replay opens a fresh reuse window. Kept only for hosts that explicitly want
+	 * that behavior; leave it true.
+	 */
 	refuseReused: true,
 	/** Whether accepting a code opens a reuse window. */
 	windowEnabled: true,
@@ -103,7 +108,7 @@ function configProblems(config) {
 	need("periodSeconds", posInt, "must be a positive integer");
 	need("algorithm", (v) => v === "SHA1" || v === "SHA256" || v === "SHA512", 'must be "SHA1", "SHA256" or "SHA512"');
 	need("skewSteps", (v) => inRange(v, 0, 2), "must be an integer between 0 and 2");
-	need("seedBytes", posInt, "must be a positive integer");
+	need("seedBytes", (v) => isInt(v) && v >= 16, "must be an integer of at least 16 (RFC 4226 §4 requires a seed of at least 128 bits)");
 	need("uriIssuer", nonEmptyString, "must be a non-empty string");
 	need("uriLabel", (v) => v === undefined || nonEmptyString(v), "must be a non-empty string when given");
 	need("refuseReused", (v) => typeof v === "boolean", "must be a boolean");
@@ -145,6 +150,13 @@ function configProblems(config) {
 
 const KNOWN_KEYS = new Set(Object.keys(DEFAULTS).concat("uriLabel"));
 
+/** The only keys each nested option object accepts (unknown keys inside them are rejected too). */
+const NESTED_KEYS = new Map([
+	["failureCounting", new Set(["mode", "windowMs"])],
+	["lockoutEscalation", new Set(["factor", "maxSeconds"])],
+	["hardLockTrigger", new Set(["lockouts", "windowMs"])]
+]);
+
 /**
  * Parse the machine's options: merge `input` over `DEFAULTS`, validate once, freeze.
  * `undefined`/`null` means "all defaults". Unknown keys are rejected (a typo must not
@@ -160,6 +172,15 @@ export function parseOtpOptions(input) {
 		if (!KNOWN_KEYS.has(key)) throw new OtpError("OTP_OPTIONS_INVALID", `otp options: unknown option "${key}"`);
 	}
 	const merged = /** @type {Record<string, unknown>} */ ({ ...DEFAULTS, ...raw });
+	// Unknown keys inside the nested option objects are rejected the same way as unknown
+	// top-level keys — a typo must not silently fall back to a default there either.
+	for (const [key, allowed] of NESTED_KEYS) {
+		const nested = merged[key];
+		if (!isObject(nested)) continue; // shape problems are reported by configProblems
+		for (const sub of Object.keys(nested)) {
+			if (!allowed.has(sub)) throw new OtpError("OTP_OPTIONS_INVALID", `otp options: unknown option "${key}.${sub}"`);
+		}
+	}
 	// `lockoutEscalation.maxSeconds` defaults to `lockoutSeconds` when not given: factor 1
 	// then means "no cap at all", and a caller raising `lockoutSeconds` (say 900) is never
 	// silently clamped back down to the default's cap.
@@ -204,10 +225,10 @@ function deepFreeze(value) {
  * @property {number} periodSeconds Seconds one TOTP step lasts.
  * @property {"SHA1" | "SHA256" | "SHA512"} algorithm HMAC algorithm.
  * @property {0|1|2} skewSteps Steps of clock skew accepted either side.
- * @property {number} seedBytes Random bytes in a new seed.
+ * @property {number} seedBytes Random bytes in a new seed (at least 16 — RFC 4226 §4 requires at least 128 bits).
  * @property {string} uriIssuer Issuer in the otpauth URI.
  * @property {string|undefined} [uriLabel] Caller-supplied account label for the URI.
- * @property {boolean} refuseReused Whether a spent code is refused without counting.
+ * @property {boolean} refuseReused Whether a spent code is refused without counting. UNSAFE to turn off: a sniffed code can then be replayed within the skew window and every replay opens a fresh reuse window.
  * @property {boolean} windowEnabled Whether accepting a code opens a reuse window.
  * @property {number} windowSeconds Seconds an open window stays usable.
  * @property {number} maxFailures Bad codes that start a short lockout.
