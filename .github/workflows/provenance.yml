@@ -1,12 +1,12 @@
 #
-#	@Project: @cldmv/otp
+#	@Project: @cldmv/lib-otp
 #	@Filename: /.github/workflows/provenance.yml
 #	@Date: 2026-09-05T00:00:00-07:00 (1788591600)
 #	@Author: Nate Corcoran <CLDMV>
 #	@Email: <Shinrai@users.noreply.github.com>
 #	-----
 #	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
-#	@Last modified time: 2026-11-12T18:03:02-08:00 (1794535382)
+#	@Last modified time: 2026-11-12T21:36:51-08:00 (1794548211)
 #	-----
 #	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
@@ -44,7 +44,7 @@ jobs:
             tag: ${{ github.event.release.tag_name }}
             # CUSTOMIZE: these MUST match your publish.yml so the re-packed
             # tarballs are byte-identical to what was published.
-            package_name: "@cldmv/otp"
+            package_name: "@cldmv/lib-otp"
             node_version: "lts/*"
             # Satellite packages (same value as publish.yml's extra_packages);
             # empty disables. See docs/conventions/satellite-packages.md.

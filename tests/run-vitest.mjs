@@ -1,20 +1,20 @@
 /**
  *
- *	@Project: @cldmv/otp
+ *	@Project: @cldmv/lib-otp
  *	@Filename: /tests/run-vitest.mjs
  *	@Date: 2026-11-12T18:01:49-08:00 (1794535309)
  *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T18:03:03-08:00 (1794535383)
+ *	@Last modified time: 2026-11-12T21:36:51-08:00 (1794548211)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
  */
 
 /**
- * @fileoverview OOM-safe Vitest runner for @cldmv/otp — delegates to
+ * @fileoverview OOM-safe Vitest runner for @cldmv/lib-otp — delegates to
  * @cldmv/vitest-runner, which spawns each test file in its own child process and
  * (under coverage) uses a blob-per-file + `--mergeReports` strategy so a single
  * process never holds coverage data for the whole suite. Mirrors how @cldmv/slothlet

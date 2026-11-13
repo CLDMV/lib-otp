@@ -1,6 +1,6 @@
 /**
  *
- *	@Project: @cldmv/otp
+ *	@Project: @cldmv/lib-otp
  *	@Filename: /.configs/eslint.config.mjs
  *	@Date: 2026-11-12T18:01:43-08:00 (1794535303)
  *	@Author: Nate Corcoran <CLDMV>

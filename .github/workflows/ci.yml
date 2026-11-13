@@ -1,12 +1,12 @@
 #
-#	@Project: @cldmv/otp
+#	@Project: @cldmv/lib-otp
 #	@Filename: /.github/workflows/ci.yml
 #	@Date: 2026-05-20T00:00:00-07:00 (1779260400)
 #	@Author: Nate Corcoran <CLDMV>
 #	@Email: <Shinrai@users.noreply.github.com>
 #	-----
 #	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
-#	@Last modified time: 2026-11-12T18:03:02-08:00 (1794535382)
+#	@Last modified time: 2026-11-12T21:36:50-08:00 (1794548210)
 #	-----
 #	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
@@ -210,7 +210,7 @@ jobs:
           github.event.pull_request.head.ref == 'hotfixes'
         uses: CLDMV/.github/.github/workflows/workflow-ci.yml@v4
         with:
-            package_name: "@cldmv/otp" # Required: replace with your NPM package name
+            package_name: "@cldmv/lib-otp" # Required: replace with your NPM package name
             # Globs that should NOT trigger the heavy CI matrix. When every changed
             # file matches one of these, `docs_only=true` flows out of the reusable
             # and `required-check` below posts a green Required PR Check without

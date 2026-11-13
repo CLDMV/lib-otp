@@ -1,6 +1,6 @@
 /**
  *
- *	@Project: @cldmv/otp
+ *	@Project: @cldmv/lib-otp
  *	@Filename: /tsup.config.mjs
  *	@Date: 2026-11-12T18:02:07-08:00 (1794535327)
  *	@Author: Nate Corcoran <CLDMV>

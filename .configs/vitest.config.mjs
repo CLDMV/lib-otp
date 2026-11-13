@@ -1,13 +1,13 @@
 /**
  *
- *	@Project: @cldmv/otp
+ *	@Project: @cldmv/lib-otp
  *	@Filename: /.configs/vitest.config.mjs
  *	@Date: 2026-11-12T18:01:46-08:00 (1794535306)
  *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T18:22:02-08:00 (1794536522)
+ *	@Last modified time: 2026-11-12T21:36:50-08:00 (1794548210)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -22,11 +22,11 @@ import path from "node:path";
 // matter what cwd vitest is invoked from.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Wire the `otp-dev` condition (exports["."].otp-dev → src/) into resolution and
+// Wire the `lib-otp-dev` condition (exports["."].lib-otp-dev → src/) into resolution and
 // the test process, so tests importing the package by name hit src/ and the CJS
 // shim can require() the ESM sibling. devCondition() reads the condition name
 // from package.json and sets resolve.conditions, ssr.resolve.conditions and
-// test.execArgv (--conditions=otp-dev).
+// test.execArgv (--conditions=lib-otp-dev).
 const dev = devCondition({ root });
 
 export default mergeConfig(

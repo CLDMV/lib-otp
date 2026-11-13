@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  *
- *	@Project: @cldmv/otp
+ *	@Project: @cldmv/lib-otp
  *	@Filename: /src/bin/otp.mjs
  *	@Date: 2026-11-12T18:03:25-08:00 (1794535405)
  *	@Author: Nate Corcoran <CLDMV>

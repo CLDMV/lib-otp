@@ -1,5 +1,5 @@
 {
-	"name": "@cldmv/otp",
+	"name": "@cldmv/lib-otp",
 	"version": "0.0.0",
 	"description": "Configurable TOTP codes, otpauth/QR enrolment and a pure lockout state machine",
 	"type": "module",
@@ -32,7 +32,7 @@
 	},
 	"exports": {
 		".": {
-			"otp-dev": {
+			"lib-otp-dev": {
 				"types": "./types/src/index.d.mts",
 				"import": "./src/index.mjs",
 				"require": "./src/index.cjs"
@@ -79,12 +79,12 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/CLDMV/otp.git"
+		"url": "git+https://github.com/CLDMV/lib-otp.git"
 	},
 	"bugs": {
-		"url": "https://github.com/CLDMV/otp/issues"
+		"url": "https://github.com/CLDMV/lib-otp/issues"
 	},
-	"homepage": "https://github.com/CLDMV/otp#readme",
+	"homepage": "https://github.com/CLDMV/lib-otp#readme",
 	"devDependencies": {
 		"@cldmv/configs": "^1.4.0",
 		"@cldmv/eslint-plugin-jsonv": "^1.1.2",

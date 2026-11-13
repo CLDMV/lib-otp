@@ -1,12 +1,12 @@
 #
-#	@Project: @cldmv/otp
+#	@Project: @cldmv/lib-otp
 #	@Filename: /.github/workflows/next-release.yml
 #	@Date: 2026-05-22T00:00:00-07:00 (1779433200)
 #	@Author: Nate Corcoran <CLDMV>
 #	@Email: <Shinrai@users.noreply.github.com>
 #	-----
 #	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
-#	@Last modified time: 2026-11-12T18:03:02-08:00 (1794535382)
+#	@Last modified time: 2026-11-12T21:36:51-08:00 (1794548211)
 #	-----
 #	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
@@ -51,7 +51,7 @@ jobs:
             pull-requests: write
         uses: CLDMV/.github/.github/workflows/workflow-next-release.yml@v4
         with:
-            package_name: "@cldmv/otp"
+            package_name: "@cldmv/lib-otp"
             build_command: "npm run build:ci"
         secrets:
             # Map your repo/org secrets to the expected names.

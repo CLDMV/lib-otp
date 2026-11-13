@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  *
- *	@Project: @cldmv/otp
+ *	@Project: @cldmv/lib-otp
  *	@Filename: /.githooks/install.mjs
  *	@Date: 2026-11-12T18:01:40-08:00 (1794535300)
  *	@Author: Nate Corcoran <CLDMV>
