@@ -1,5 +1,185 @@
 # @cldmv/lib-otp
 
-Configurable TOTP codes, otpauth/QR enrolment and a pure lockout state machine. Used by `@cldmv/gh-broker` and Quack.
+Configurable TOTP codes, otpauth/QR enrolment and a pure per-person lockout state machine. Used by `@cldmv/gh-broker` and Quack.
 
-Work in progress.
+Everything is plain functions over injected inputs: no environment, no filesystem, no clock reads (every call takes `now`), no module state, no top-level side effects. ESM at source with a thin CJS shim; the only runtime dependency is `qrcode` (pure JS). Results are JSON-safe; every deliberate rejection is an [`OtpError`](#errors) with a stable `code`. Nothing — no code, no seed, nothing derived from them except caller-supplied window ids — ever appears in a result, an error or machine state.
+
+## Install
+
+```sh
+npm install @cldmv/lib-otp
+```
+
+- **ESM**: `import { stepOtp } from "@cldmv/lib-otp"`
+- **CJS**: `const { stepOtp } = require("@cldmv/lib-otp")` — the CJS entry is a thin shim that `require()`s the ESM bundle, so both surfaces are the same module. It needs Node.js `^20.19.0 || >=22.13.0` (`require(esm)`); older Node loads the package with `import()`.
+
+`engines.node` is `>=20.19.0`. Development (`devEngines.runtime`) requires Node `>=22.22.0`.
+
+### The `lib-otp-dev` condition
+
+The package's export map carries a `lib-otp-dev` condition pointing at `src/`. Tests and dev tooling run with `--conditions=lib-otp-dev` (see `.configs/vitest.config.mjs`) so a by-name import resolves to source instead of the last build:
+
+```sh
+node --conditions=lib-otp-dev -e 'import("@cldmv/lib-otp").then(m => console.log(m.name))'
+```
+
+## The option set
+
+`parseOtpOptions` is the only way in: it merges the input over `DEFAULTS`, validates once up front (typed errors — a bad value refuses, it is never clamped) and returns a frozen config. The machine and `verifyCode` accept only that type.
+
+| Option              | Default                                 | Meaning                                                                                                                                                                                               |
+| ------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `digits`            | `6`                                     | Digits in a code (bounded 6–8).                                                                                                                                                                       |
+| `periodSeconds`     | `30`                                    | Seconds one TOTP step lasts.                                                                                                                                                                          |
+| `algorithm`         | `"SHA1"`                                | HMAC algorithm (SHA1 is the only implemented one).                                                                                                                                                    |
+| `skewSteps`         | `1`                                     | Steps of clock skew accepted either side (bounded 0–2).                                                                                                                                               |
+| `seedBytes`         | `20`                                    | Random bytes in a new seed.                                                                                                                                                                           |
+| `uriIssuer`         | `"gh-broker"`                           | Issuer in the otpauth URI.                                                                                                                                                                            |
+| `uriLabel`          | _(caller-supplied)_                     | Account label for the URI — no default.                                                                                                                                                               |
+| `refuseReused`      | `true`                                  | Whether a spent code is refused without counting as a guess.                                                                                                                                          |
+| `windowEnabled`     | `true`                                  | Whether accepting a code opens a reuse window. `false` opens no new windows; open ones serve until expiry.                                                                                            |
+| `windowSeconds`     | `300`                                   | Seconds an open window stays usable (fixed, no renewal).                                                                                                                                              |
+| `maxFailures`       | `5`                                     | Bad codes that start a short lockout.                                                                                                                                                                 |
+| `failureCounting`   | `{ mode: "since-accept-or-lockout" }`   | How bad codes count: a plain counter reset on accept or lockout, or `{ mode: "window", windowMs }` — failures within a rolling `windowMs` (backed by `failureTimes`, maintained only in window mode). |
+| `lockoutSeconds`    | `600`                                   | Seconds one short lockout lasts (before escalation).                                                                                                                                                  |
+| `lockoutEscalation` | `{ factor: 1, maxSeconds: 600 }`        | The Nth lockout within the rolling `hardLockTrigger.windowMs` lasts `lockoutSeconds * factor^(N-1)`, capped at `maxSeconds`.                                                                          |
+| `spendOnUnlock`     | `true`                                  | Whether an admin-unlock also spends the codes through now (the lost-update guard).                                                                                                                    |
+| `hardLockEnabled`   | `true`                                  | Whether new hard locks can be created. `false` never clears an existing one.                                                                                                                          |
+| `hardLockTrigger`   | `{ lockouts: 3, windowMs: 86_400_000 }` | Hard lock trigger: this many short lockouts within a rolling window (strictly newer entries kept).                                                                                                    |
+
+Unknown keys are rejected, so a typo can't silently fall back to a default. Persisted timestamps are absolute and honored as-is: a changed `lockoutSeconds`/`lockoutEscalation` applies to the next lockout, `hardLock.since` stands until admin-unlock, and a `periodSeconds` change re-bases the spend marker (see below).
+
+## The machine
+
+One person's record; the host owns storage, code matching and prose.
+
+```js
+import { emptyPerson, stepOtp, lockStatus, parseOtpOptions } from "@cldmv/lib-otp";
+
+const config = parseOtpOptions(); // frozen defaults
+let state = emptyPerson();
+
+// The host matched a code and tells the machine what happened:
+const { state: next, outcome } = stepOtp(state, { kind: "code-ok", counter: 59_786_401, windowId: "a1b2c3d4e5f60718", now: Date.now() });
+// outcome: { reason: "opened", counter, window, expiresAt }
+```
+
+### `PersonState`
+
+| Field                | Meaning                                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `failures`           | Bad codes since the last accepted code or short lockout (or, in window-counting mode, within the rolling window). |
+| `failureTimes`       | Ms timestamps of those failures — maintained only in window-counting mode.                                        |
+| `lockedUntil`        | ISO end of the current short lockout, or `null`.                                                                  |
+| `lockouts`           | ISO start times of short lockouts, pruned to the hard-lock window.                                                |
+| `hardLock`           | `{ since, lockouts }` snapshot, or `null`. Never expires; cleared only by admin-unlock.                           |
+| `lastCounter`        | Highest accepted TOTP counter — the spend marker.                                                                 |
+| `lastAcceptedPeriod` | The period `lastCounter` was computed under (0 when nothing was accepted).                                        |
+| `windows`            | `{ id, expiresAt }` only — memory-tier; no code, no digest, nothing code-derived.                                 |
+
+`emptyPerson()` is the all-zero record; `compactPerson(state, now, config)` tidies for persistence (prunes lockouts to the hard-lock window, clears an expired short lockout, drops expired windows; dropping the entry itself is the host's call); `isPersonState(state)` is the machine's own runtime check. `stepOtp` never mutates its input — changed records come back frozen.
+
+### Events
+
+```js
+{
+	kind: ("code-ok", counter, windowId, now);
+} // the host verified a code; windowId is the caller's (keyed with a secret that is never persisted)
+{
+	kind: ("code-bad", now);
+} // the code matched nothing
+{
+	kind: ("window-use", id, now);
+} // a call re-used an open window's code (the host mapped code → id)
+{
+	kind: ("admin-unlock", by, now);
+} // an administrator cleared this person (non-empty `by` required)
+{
+	kind: ("tick", now);
+} // housekeeping: prunes expired windows only
+```
+
+Missing and malformed codes are host input validation and never reach the machine. `now` is ms everywhere.
+
+### Outcomes (reason codes, not prose)
+
+| `outcome.reason`                          | Fields                           | Meaning                                                                                                                                               |
+| ----------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"opened"`                                | `counter`, `window`, `expiresAt` | A code was accepted; `{ id, expiresAt }` was appended to `windows`. With `windowEnabled: false` no window is appended — don't map the code for reuse. |
+| `"window"`                                | `window`                         | A window-use was accepted (the window is not consumed).                                                                                               |
+| `"bad-code"`                              | `failures`                       | Counted; no lockout started.                                                                                                                          |
+| `"locked-out"`                            | `failures`, `until`              | Counted AND this code started a short lockout (the count reset to 0).                                                                                 |
+| `"hard-locked-now"`                       | `since`, `lockouts`              | Counted AND this code triggered the hard lock.                                                                                                        |
+| `"locked"`                                | `until`                          | Refused while short-locked — not counted, nothing consumed or reset.                                                                                  |
+| `"hard-locked"`                           | `since`                          | Refused while hard-locked.                                                                                                                            |
+| `"spent-code"`                            | —                                | The counter is at or below the spend marker — not counted.                                                                                            |
+| `"unlocked"` / `"cleared"` / `"no-entry"` | —                                | admin-unlock's three outcomes: a hard-locked entry existed / an entry existed but wasn't hard-locked / nothing to clear.                              |
+
+The machine enforces its own lock: `code-ok`, `code-bad` and `window-use` while `lockStatus(state, now) !== "clear"` return the `locked`/`hard-locked` outcome without counting, consuming or resetting anything. `lockStatus` itself is a read-only helper. `tick` prunes expired windows and never touches `hardLock` or `failures`; only admin-unlock clears a hard lock.
+
+**Spent semantics:** the machine decides "spent" when `counter <= lastCounter` under the stored period. If `lastAcceptedPeriod` differs from the configured `periodSeconds`, the machine re-bases `lastCounter` to `spendThrough(now, config)` first — nothing can replay, and the only cost is that the current codes stop working briefly.
+
+**admin-unlock:** resets everything except the windows (an open window survives an unlock) and the spend marker; `spendOnUnlock` applies `spendThrough`. `by` is used only for the outcome and the host's security events — never stored. Hosts are expected to refuse `by === person`; the machine doesn't enforce it.
+
+### `spendThrough`
+
+`spendThrough(now, config)` = `floor(now / 1000 / periodSeconds) + skewSteps` — the counter nothing issued at or before `now` can beat. This is the spend an admin-unlock (and a period re-base) applies; hosts that rewrite state wholesale (an unlock-all, a corrupt-file repair) call it directly.
+
+## Enrolment
+
+```js
+import { newSeed, otpauthUri, renderQr, verifyCode } from "@cldmv/lib-otp";
+
+const seed = newSeed(); // 20 random bytes as base32 (32 chars); { seedBytes, random } injectable
+const uri = otpauthUri(seed, "ada@example.com", "gh-broker", config);
+console.log(await renderQr(uri)); // terminal QR
+```
+
+- `verifyCode(seed, code, now, config)` returns the TOTP step the code matches (skew-aware, digit-count from the config), or `undefined` when it matches none. A malformed code never matches; **a broken seed throws** — a config error must never read as "no match" and lock everyone out. Take the config — not loose options — so the verifier can't disagree with the machine.
+- `renderQr(uri, { format })` renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic.
+
+## Status reporting
+
+```js
+import { describeUser, describeUsers, formatStatus } from "@cldmv/lib-otp";
+
+describeUser(state, { maxFailures, maxLockouts, windowMs }, now); // one person's lock facts
+describeUsers(states, limits, now); // sorted facts for a map of persons
+formatStatus(describeUsers(states), { configured: true, unlockCommand: "sudo my-tool otp unlock" });
+```
+
+`formatStatus`'s `unlockCommand` is required — the library never invents command text.
+
+## TOTP and base32 primitives
+
+`STEP_SECONDS`, `base32Encode`, `base32Decode`, `hotp`, `stepAt`, `totpAt`, `safeEqual`, `matchStep` — the pure RFC 6238 / RFC 4226 / RFC 4648 layer on `node:crypto` only. `base32Decode` throws on any character outside the alphabet, so a damaged seed is reported instead of silently producing codes nobody's authenticator can match; `matchStep` compares every candidate step (no early exit) with constant-time comparisons.
+
+## Errors
+
+Every deliberate rejection is an `OtpError` (an `Error` subclass) with a stable `code`:
+
+| `code`                                               | Raised by                                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| `OTP_OPTIONS_INVALID`                                | `parseOtpOptions` — bad input shape, unknown key or out-of-range value. |
+| `OTP_CONFIG_INVALID`                                 | `stepOtp` — the config isn't a valid machine config.                    |
+| `OTP_STATE_INVALID`                                  | `stepOtp` — the state isn't a `PersonState` record.                     |
+| `OTP_EVENT_INVALID`                                  | `stepOtp` — an unknown event kind or a missing/malformed event field.   |
+| `OTP_UNLOCK_BY_REQUIRED`                             | `stepOtp` — an admin-unlock without a non-empty `by`.                   |
+| `OTP_SEED_INVALID`                                   | `verifyCode` / `otpauthUri` — an empty, non-string or non-base32 seed.  |
+| `OTP_URI_LABEL_REQUIRED` / `OTP_URI_ISSUER_REQUIRED` | `otpauthUri` — a missing label or issuer.                               |
+| `OTP_QR_FORMAT`                                      | `renderQr` — an unknown format.                                         |
+
+Messages are human-readable and safe to log: they never contain a code, a seed or anything derived from them.
+
+## Development
+
+```sh
+npm test            # vitest (via @cldmv/vitest-runner), tests run against src/
+npm run coverage    # v8 coverage — 100% across the board
+npm run build:ci    # lint + format:check + types + tsup build
+npm run fix:headers # file headers (via @cldmv/fix-headers)
+```
+
+## License
+
+Apache-2.0 — Copyright (c) 2013-2026 Catalyzed Motivation Inc.
