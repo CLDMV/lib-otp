@@ -4,6 +4,13 @@ Configurable TOTP codes, otpauth/QR enrolment and a pure per-person lockout stat
 
 Everything is plain functions over injected inputs: no environment, no filesystem, no clock reads (every call takes `now`), no module state, no top-level side effects. ESM at source with a thin CJS shim; the only runtime dependency is `qrcode` (pure JS). Results are JSON-safe; every deliberate rejection is an [`OtpError`](#errors) with a stable `code`. Nothing — no code, no seed, nothing derived from them except caller-supplied window ids — ever appears in a result, an error or machine state.
 
+## ✨ What's New
+
+### Latest: v0.1.0 (November 2026)
+
+- **First release** — configurable TOTP verification, otpauth/QR enrolment and a pure per-person lockout state machine with escalation and an optional hard lock, all driven by one validated option set. It also ships an `otp` command line (`seed`, `uri`, `qr`, `code`, `verify`) that reads seeds only from a file or stdin.
+- [View full v0.1.0 Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.1.0.md)
+
 ## Install
 
 ```sh
