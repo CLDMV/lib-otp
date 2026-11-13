@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -57,8 +57,10 @@ export function describeUser(
 		maxLockouts = DEFAULTS.hardLockTrigger.lockouts,
 		windowMs = DEFAULTS.hardLockTrigger.windowMs
 	} = {},
-	now = Date.now()
+	now
 ) {
+	if (typeof now !== "number" || !Number.isFinite(now))
+		throw new TypeError("describeUser: now is required (the library never reads a clock)");
 	const lockedUntil = person.lockedUntil !== null && Date.parse(person.lockedUntil) > now ? person.lockedUntil : null;
 	return {
 		locked: person.hardLock !== null || lockedUntil !== null,
@@ -78,7 +80,7 @@ export function describeUser(
  * @param {number} [now] Ms; defaults to the current time.
  * @returns {PersonStatus[]}
  */
-export function describeUsers(states, limits = {}, now = Date.now()) {
+export function describeUsers(states, limits = {}, now) {
 	// Object keys are unique, so the names are never equal — a two-way compare is total here.
 	return Object.entries(states)
 		.sort(([a], [b]) => (a < b ? -1 : 1))

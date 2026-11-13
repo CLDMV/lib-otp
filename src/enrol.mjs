@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -119,5 +119,5 @@ export function verifyCode(seed, code, now, config = DEFAULTS) {
 		throw new OtpError("OTP_SEED_INVALID", `verifyCode: the seed is not valid base32: ${err.message}`);
 	}
 	if (key.length === 0) throw new OtpError("OTP_SEED_INVALID", "verifyCode: the seed is empty");
-	return matchStep(key, code, now, config.skewSteps, config.digits);
+	return matchStep(key, code, now, config.skewSteps, config.digits, config.algorithm, config.periodSeconds);
 }

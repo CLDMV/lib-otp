@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:57-08:00 (1794549837)
+ *	@Last modified time: 2026-11-12T22:24:35-08:00 (1794551075)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -138,7 +138,8 @@ describe("parseOtpOptions", () => {
 		["periodSeconds zero", { periodSeconds: 0 }, /periodSeconds must be a positive integer/],
 		["periodSeconds negative", { periodSeconds: -30 }, /periodSeconds must be a positive integer/],
 		["periodSeconds fractional", { periodSeconds: 29.5 }, /periodSeconds must be a positive integer/],
-		["unsupported algorithm", { algorithm: "SHA256" }, /algorithm must be "SHA1"/],
+		["unsupported algorithm", { algorithm: "MD5" }, /algorithm must be "SHA1", "SHA256" or "SHA512"/],
+		["unsupported algorithm case", { algorithm: "sha256" }, /algorithm must be "SHA1", "SHA256" or "SHA512"/],
 		["skewSteps above the bound", { skewSteps: 3 }, /skewSteps must be an integer between 0 and 2/],
 		["skewSteps negative", { skewSteps: -1 }, /skewSteps must be an integer between 0 and 2/],
 		["skewSteps fractional", { skewSteps: 1.5 }, /skewSteps must be an integer between 0 and 2/],

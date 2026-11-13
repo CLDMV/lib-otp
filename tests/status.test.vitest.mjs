@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:57-08:00 (1794549837)
+ *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -66,9 +66,11 @@ describe("describeUser", () => {
 		});
 	});
 
-	it("defaults now to the current time", () => {
+	it("requires now (the library never reads a clock)", () => {
 		const person = { ...emptyPerson(), lockedUntil: iso(Date.now() + MIN) };
-		expect(describeUser(person).locked).toBe(true);
+		expect(() => describeUser(person)).toThrow(TypeError);
+		expect(() => describeUser(person, {})).toThrow(/now is required/);
+		expect(describeUser(person, {}, Date.now()).locked).toBe(true);
 	});
 });
 

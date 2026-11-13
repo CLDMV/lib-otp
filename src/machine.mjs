@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -282,11 +282,13 @@ function codeOk(state, event, config) {
 		lastCounter = spendThrough(event.now, config);
 		lastAcceptedPeriod = config.periodSeconds;
 	}
-	if (event.counter <= lastCounter) {
+	if (event.counter <= lastCounter && config.refuseReused) {
 		const next =
 			lastAcceptedPeriod !== working.lastAcceptedPeriod ? freezePerson({ ...working, lastCounter, lastAcceptedPeriod }) : working;
 		return { state: next, outcome: { reason: "spent-code" } };
 	}
+	// With refuseReused false a reused code is accepted — the option's whole point. The
+	// spend marker still only moves forward, so an older counter can never lower it.
 
 	// Accept: the counter is fresh. Reset the guess budget, record the spend, open the
 	// window (when windows are enabled — with windowEnabled false no window is appended
@@ -298,7 +300,7 @@ function codeOk(state, event, config) {
 		...working,
 		failures: 0,
 		failureTimes: [],
-		lastCounter: event.counter,
+		lastCounter: Math.max(lastCounter, event.counter),
 		lastAcceptedPeriod: config.periodSeconds,
 		windows
 	});

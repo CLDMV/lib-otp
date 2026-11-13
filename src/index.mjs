@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -20,12 +20,8 @@
  * inputs (no env, no filesystem, no clock, no module state).
  */
 
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-
-/** Package manifest, read from the package root (works from `src/` and from the bundled `dist/`). */
-const pkg = require("../package.json");
+/** Package manifest, imported statically (works from `src/` and, inlined, from the bundled `dist/`). */
+import pkg from "../package.json" with { type: "json" };
 
 /** The package name, `@cldmv/lib-otp`. */
 export const name = pkg.name;

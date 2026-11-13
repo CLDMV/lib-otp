@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -32,7 +32,7 @@ export const DEFAULTS = Object.freeze({
 	digits: 6,
 	/** Seconds one TOTP step lasts. */
 	periodSeconds: 30,
-	/** HMAC algorithm. Only SHA1 is implemented (RFC 6238's mandated baseline). */
+	/** HMAC algorithm: RFC 6238's SHA-1 baseline, or SHA-256/SHA-512. */
 	algorithm: "SHA1",
 	/** Steps of clock skew accepted either side of the current one. */
 	skewSteps: 1,
@@ -91,7 +91,7 @@ function configProblems(config) {
 	};
 	need("digits", (v) => inRange(v, 6, 8), "must be an integer between 6 and 8");
 	need("periodSeconds", posInt, "must be a positive integer");
-	need("algorithm", (v) => v === "SHA1", 'must be "SHA1"');
+	need("algorithm", (v) => v === "SHA1" || v === "SHA256" || v === "SHA512", 'must be "SHA1", "SHA256" or "SHA512"');
 	need("skewSteps", (v) => inRange(v, 0, 2), "must be an integer between 0 and 2");
 	need("seedBytes", posInt, "must be a positive integer");
 	need("uriIssuer", nonEmptyString, "must be a non-empty string");
@@ -175,7 +175,7 @@ function deepFreeze(value) {
  * @typedef {Object} OtpMachineConfig
  * @property {6|7|8} digits Digits in a code.
  * @property {number} periodSeconds Seconds one TOTP step lasts.
- * @property {"SHA1"} algorithm HMAC algorithm.
+ * @property {"SHA1" | "SHA256" | "SHA512"} algorithm HMAC algorithm.
  * @property {0|1|2} skewSteps Steps of clock skew accepted either side.
  * @property {number} seedBytes Random bytes in a new seed.
  * @property {string} uriIssuer Issuer in the otpauth URI.

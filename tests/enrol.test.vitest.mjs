@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -191,5 +191,14 @@ describe("matchStep parity with the machine config", () => {
 		expect(verifyCode(SEED, hotp(KEY, step - 2, 8), T, c)).toBe(step - 2);
 		expect(verifyCode(SEED, hotp(KEY, step - 3, 8), T, c)).toBeUndefined();
 		expect(matchStep(KEY, hotp(KEY, step, 8), T, c.skewSteps, c.digits)).toBe(step);
+	});
+
+	it("verifyCode and the machine agree on period and algorithm through the same config object", () => {
+		const c = parseOtpOptions({ periodSeconds: 60, algorithm: "SHA256" });
+		const step = stepAt(T, c.periodSeconds);
+		const code = hotp(KEY, step, c.digits, c.algorithm);
+		expect(verifyCode(SEED, code, T, c)).toBe(step);
+		// A default-config verifier (30 s, SHA1) must not accept it:
+		expect(verifyCode(SEED, code, T)).toBeUndefined();
 	});
 });

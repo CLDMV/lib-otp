@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:57-08:00 (1794549837)
+ *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -47,6 +47,59 @@ describe("totp — RFC 6238 SHA1 test vectors", () => {
 		expect(stepAt(0)).toBe(0);
 		expect(stepAt(29_999)).toBe(0);
 		expect(stepAt(30_000)).toBe(1);
+	});
+});
+
+// RFC 6238 appendix B: 8 digits. Each algorithm's example uses its own ASCII seed —
+// 20 bytes for SHA1, 32 for SHA256, 64 for SHA512 ("1234567890…" repeated).
+const RFC_SHA256_KEY = Buffer.from("12345678901234567890123456789012", "ascii");
+const RFC_SHA512_KEY = Buffer.from("1234567890123456789012345678901234567890123456789012345678901234", "ascii");
+const RFC_SHA256_VECTORS = [
+	[59, "46119246"],
+	[1111111109, "68084774"],
+	[1111111111, "67062674"],
+	[1234567890, "91819424"],
+	[2000000000, "90698825"],
+	[20000000000, "77737706"]
+];
+const RFC_SHA512_VECTORS = [
+	[59, "90693936"],
+	[1111111109, "25091201"],
+	[1111111111, "99943326"],
+	[1234567890, "93441116"],
+	[2000000000, "38618901"],
+	[20000000000, "47863826"]
+];
+
+describe("totp — RFC 6238 SHA256/SHA512 test vectors", () => {
+	for (const [algorithm, key, vectors] of [
+		["SHA256", RFC_SHA256_KEY, RFC_SHA256_VECTORS],
+		["SHA512", RFC_SHA512_KEY, RFC_SHA512_VECTORS]
+	]) {
+		for (const [seconds, code] of vectors) {
+			it(`${algorithm} T=${seconds} → ${code}`, () => {
+				expect(totpAt(key, seconds * 1000, 8, algorithm)).toBe(code);
+			});
+		}
+		it(`${algorithm} flows through matchStep`, () => {
+			const seconds = 59;
+			const code = totpAt(key, seconds * 1000, 8, algorithm);
+			expect(matchStep(key, code, seconds * 1000, 1, 8, algorithm)).toBe(Math.floor(seconds / 30));
+			// A SHA-1 verifier must not accept a SHA-256/SHA-512 code:
+			expect(matchStep(RFC_KEY, code, seconds * 1000, 1, 8, "SHA1")).toBeUndefined();
+		});
+	}
+});
+
+describe("totp — configurable period", () => {
+	it("stepAt honours periodSeconds", () => {
+		expect(stepAt(59_999, 60)).toBe(0);
+		expect(stepAt(60_000, 60)).toBe(1);
+	});
+	it("a period-60 verifier matches a period-60 authenticator and not a period-30 one", () => {
+		const code = totpAt(RFC_KEY, 90_000, 6, "SHA1", 60);
+		expect(matchStep(RFC_KEY, code, 90_000, 1, 6, "SHA1", 60)).toBe(1);
+		expect(matchStep(RFC_KEY, code, 90_000, 1, 6, "SHA1", 30)).toBeUndefined();
 	});
 });
 

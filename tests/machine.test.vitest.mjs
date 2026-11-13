@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:03:56-08:00 (1794549836)
+ *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -149,6 +149,20 @@ describe("stepOtp — spent codes", () => {
 		const r2 = stepOtp(r.state, { kind: "code-ok", counter: C, windowId: "w1", now: NOW + 1000 }, config);
 		expect(r2.outcome).toEqual({ reason: "spent-code" });
 		expect(r2.state.failures).toBe(0); // reset happened at the accept, not at the spent refusal
+	});
+
+	it("accepts a reused code when refuseReused is false, and the marker still only moves forward", () => {
+		const state = accepted();
+		const noRefuse = cfg({ refuseReused: false });
+		const r = stepOtp(state, { kind: "code-ok", counter: C - 1, windowId: "w8", now: NOW + 1000 }, noRefuse);
+		expect(r.outcome.reason).toBe("opened");
+		// The spend marker never goes backward:
+		expect(r.state.lastCounter).toBe(C);
+		expect(r.state.windows).toHaveLength(2);
+		// And under the default (refuseReused true) the same code is still spent:
+		expect(stepOtp(r.state, { kind: "code-ok", counter: C - 1, windowId: "w9", now: NOW + 2000 }, config).outcome).toEqual({
+			reason: "spent-code"
+		});
 	});
 
 	it("re-bases the spend marker when the period changed (a period change spends everything through now)", () => {
