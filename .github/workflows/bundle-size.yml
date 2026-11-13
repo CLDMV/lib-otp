@@ -1,0 +1,72 @@
+#
+#	@Project: @cldmv/lib-otp
+#	@Filename: /.github/workflows/bundle-size.yml
+#	@Date: 2026-05-20T00:00:00-07:00 (1779260400)
+#	@Author: Nate Corcoran <CLDMV>
+#	@Email: <Shinrai@users.noreply.github.com>
+#	-----
+#	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
+#	@Last modified time: 2026-11-12T18:22:02-08:00 (1794536522)
+#	-----
+#	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Individual repo: .github/workflows/bundle-size.yml
+#
+# Standard in every v4 repo — adopt it alongside ci.yml, whatever the repo
+# ships (runtime library, CLI, tool, or source-only package). Don't drop it,
+# and don't prune its `📊 Bundle Size` entry from release-merge.yml's
+# `workflows:` list.
+#
+# Two inputs are per-repo — set both to match what the package publishes:
+#
+#   build_command — the repo's real build (e.g. "npm run build"). The package
+#       is built for the PR head and the PR base, then measured.
+#
+#   dist_paths — comma-separated globs (relative to the repo root) of the files
+#       the package publishes. Take them from `npm pack --dry-run` or from
+#       package.json `files`, not from a guess:
+#           "dist/**"               bundled output in dist/
+#           "index.mjs,src/**"      source-shipped: entry file + src/ tree
+#           "bin/**,lib/**"         source-shipped CLI: bin/ + lib/ trees
+#       Only `*` (within one path segment) and `**` (any depth) are
+#       supported — no `?`, `[...]`, `{a,b}`, or `!negation`. A plain file
+#       path (e.g. `index.mjs`, `lib/util.mjs`) matches that one file; no
+#       leading-`*` workaround (`*index.mjs`) is needed. If the globs match
+#       no files, the measure step logs a warning and the size table is
+#       empty, so check the job log after the first run.
+#
+# Fork-PR caveat: builds PR-supplied code, so we use `pull_request`
+# (NOT pull_request_target). Fork builds run safely without secrets;
+# comment posting fails for fork PRs because the token is read-only.
+# Maintainer can run via workflow_dispatch after reviewing the code.
+#
+# Batch 5.4 from tmp/plan-future-workflows.md.
+name: 📊 Bundle Size
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened, ready_for_review]
+        branches: [master, main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    pull-requests: write
+
+jobs:
+    diff:
+        uses: CLDMV/.github/.github/workflows/reusable-bundle-size.yml@v4
+        with:
+            build_command: "npm run build:ci"
+            dist_paths: "dist/*.mjs,dist/*.cjs,bin/*.mjs" # the published code files (package.json files: dist/, types/, bin/)
+            # warning_pct: 5
+            # warning_bytes: 500
+            # comment_mode: "update"
+        # Optional. Without these, the size-diff comment is posted by
+        # github-actions[bot]. With these, it's posted by your CLDMV bot App.
+        # Note: fork PRs can't access org secrets, so the bot attribution only
+        # applies to same-repo PRs; fork PRs fall back to GITHUB_TOKEN.
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
