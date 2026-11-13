@@ -1,6 +1,6 @@
 {
 	"name": "@cldmv/lib-otp",
-	"version": "0.0.0",
+	"version": "0.0.1",
 	"description": "Configurable TOTP codes, otpauth/QR enrolment and a pure lockout state machine",
 	"type": "module",
 	"license": "Apache-2.0",
