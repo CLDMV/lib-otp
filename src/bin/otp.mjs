@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:55:57-08:00 (1794552957)
+ *	@Last modified time: 2026-11-12T23:07:17-08:00 (1794553637)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -78,8 +78,8 @@ Global options:
 
 Exit codes:
   0  success
-  1  the code did not verify, or an error (bad seed, unreadable file, bad option value)
-  2  usage error (unknown subcommand or option, missing seed source, empty seed)
+  1  the code did not verify, or an error (bad seed, unreadable file, bad option value, a missing --label on uri/qr, a failed QR file write)
+  2  usage error (unknown subcommand or option, wrong positional count, missing seed source, empty seed, stdin is a TTY)
 `;
 
 /** Per-subcommand usage, printed by `otp <subcommand> --help` and by that subcommand's usage errors. */
