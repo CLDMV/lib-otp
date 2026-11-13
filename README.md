@@ -139,6 +139,45 @@ console.log(await renderQr(uri)); // terminal QR
 - `otpauthUri(seed, label?, issuer?, config)` validates the seed as base32 before anything is interpolated (a raw seed like `"not&valid"` would otherwise inject a URI parameter) and defaults `label`/`issuer` to the config's `uriLabel`/`uriIssuer` when omitted (explicit arguments win).
 - `renderQr(uri, { format })` renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic.
 
+## The `otp` command-line
+
+The package ships an `otp` CLI (the `bin` entry, built to `bin/otp.mjs`): `otp seed | uri | qr | code | verify`. It is a thin wrapper over the exported functions — every option is mapped onto `parseOtpOptions`, so the CLI can never disagree with the machine (a bad value is the library's `OtpError`, never a silent clamp). The CLI is the only part of the package that touches `process.argv`, stdin, the filesystem or the clock; the library stays pure.
+
+```sh
+otp seed --length 32 --label ada@example.com   # a new seed + its otpauth URI (shown once)
+otp uri --seed-file seed.txt --label ada@example.com   # the otpauth URI for a stored seed
+otp qr --seed-file seed.txt --label ada@example.com    # QR in the terminal
+otp qr --seed-file seed.txt --out enrol.png    # a real .png file (or .svg)
+otp code --seed-file seed.txt                  # the current code
+otp verify 123456 --seed-file seed.txt         # exit 0 valid, exit 1 invalid
+```
+
+### The seed source — never a command-line argument
+
+Every subcommand that takes a seed reads it from `--seed-file <path>` or from stdin (`--seed-file -` reads stdin too). Surrounding whitespace is stripped. A terminal on stdin is never read — with no `--seed-file` and a TTY on stdin, that is a usage error (exit 2), not a prompt. The seed never travels as an argument (shell history and `ps` would expose it) and never appears in an error message.
+
+### Subcommands and flags
+
+| Subcommand      | Flags (default)                                                                                                                                 | Output                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `seed`          | `--length <bytes>` (20, minimum 16 — RFC 4226 §4), `--algorithm <a>` (SHA1; the URI's algorithm), `--label`, `--issuer`, `--digits`, `--period` | The seed labeled `key:`, plus the `uri:` when the config carries a label (without `--label` a hint to run `otp uri` instead). |
+| `uri`           | `--label` (required), `--issuer` (the config's `uriIssuer`), `--digits` (6), `--period` (30), `--algorithm` (SHA1)                              | The otpauth URI.                                                                                                              |
+| `qr`            | the `uri` flags plus `--out <file>`                                                                                                             | The QR in the terminal, or — `--out` — a real `.png` (raw PNG bytes) or `.svg` file; the extension decides the format.        |
+| `code`          | `--digits`, `--period`, `--algorithm`                                                                                                           | The current code.                                                                                                             |
+| `verify <code>` | `--digits`, `--period`, `--algorithm`                                                                                                           | `valid` / `invalid`.                                                                                                          |
+
+Every subcommand also takes `--json` (one JSON object on stdout: `{"seed", "uri"?}` / `{"uri"}` / `{"qr"}` or `{"out", "format"}` / `{"code"}` / `{"valid"}`; errors as `{"error": {"code", "message"}}` on stdout with a nonzero exit), `--help` / `-h` (usage per subcommand, exit 0) and `--version` / `-V` (the package version). Flags go after the subcommand (`otp uri --json`, not `otp --json uri`).
+
+### Exit codes
+
+| Code | Meaning                                                                                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — for `verify`, the code matched.                                                                                                                  |
+| `1`  | `verify`'s non-match (a normal outcome, `invalid`), or an error: bad seed, bad option value, unreadable seed file, unreadable stdin, failed QR file write. |
+| `2`  | usage error: unknown subcommand or option, wrong positional count, missing seed source, TTY on stdin, empty seed.                                          |
+
+Under `--json`, errors carry a stable `code`: the library's own (`OTP_SEED_INVALID`, `OTP_OPTIONS_INVALID`, `OTP_URI_LABEL_REQUIRED`, …) pass through unchanged; the CLI adds `OTP_USAGE` (exit 2), `OTP_SEED_FILE_UNREADABLE`, `OTP_STDIN_UNREADABLE` and `OTP_CLI_ERROR` (exit 1).
+
 ## Status reporting
 
 ```js
