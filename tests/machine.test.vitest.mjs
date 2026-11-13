@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:46-08:00 (1794551026)
+ *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -165,36 +165,78 @@ describe("stepOtp — spent codes", () => {
 		});
 	});
 
-	it("re-bases the spend marker when the period changed (a period change spends everything through now)", () => {
+	// The old marker C (period 30) accepted everything through slot C's end; in 60 s units
+	// that end falls in slot ceil((C + 1) / 2) - 1. NOW falls exactly on a 60 s boundary,
+	// so the current 60 s step equals the converted marker.
+	const converted60 = Math.ceil((C + 1) / 2) - 1;
+
+	it("re-bases the spend marker to the new period's units when the period changed, independent of now", () => {
 		// Accepted under period 30; the host reconfigured to period 60.
 		const state = accepted();
-		const p60 = cfg({ periodSeconds: 60, skewSteps: 1 });
-		// The code an authenticator shows now, under the new 60 s period.
+		const p60 = cfg({ periodSeconds: 60 });
+		// The current 60 s code (the first one presented after the change) is spent — its
+		// slot was already accepted under the old period.
 		const r = stepOtp(state, { kind: "code-ok", counter: Math.floor(NOW / 1000 / 60), windowId: "w1", now: NOW }, p60);
-		// Re-base: lastCounter = floor(NOW/60) + skew — the current code is spent.
-		const rebased = Math.floor(NOW / 1000 / 60) + 1;
-		expect(r.state.lastCounter).toBe(rebased);
-		expect(r.state.lastAcceptedPeriod).toBe(60);
 		expect(r.outcome).toEqual({ reason: "spent-code" });
+		expect(r.state.lastCounter).toBe(converted60);
+		expect(r.state.lastAcceptedPeriod).toBe(60);
 
 		// And nothing below the re-based marker can replay afterwards.
-		const r2 = stepOtp(r.state, { kind: "code-ok", counter: rebased, windowId: "w1", now: NOW + 1000 }, p60);
+		const r2 = stepOtp(r.state, { kind: "code-ok", counter: converted60, windowId: "w1", now: NOW + 1000 }, p60);
 		expect(r2.outcome).toEqual({ reason: "spent-code" });
 		// A counter above it is accepted (the machine only knows the spend marker).
-		const r3 = stepOtp(r2.state, { kind: "code-ok", counter: rebased + 1, windowId: "w1", now: NOW + 1000 }, p60);
+		const r3 = stepOtp(r2.state, { kind: "code-ok", counter: converted60 + 1, windowId: "w1", now: NOW + 1000 }, p60);
 		expect(r3.outcome.reason).toBe("opened");
 	});
 
-	it("re-bases when the period changed in the other direction", () => {
+	it("a period change followed by a fresh code gives opened, with the whole state saved in that one step", () => {
+		const state = accepted();
+		const p60 = cfg({ periodSeconds: 60 });
+		// One 60 s step past the converted marker: a code from the next new-period slot.
+		const fresh = converted60 + 1;
+		const r = stepOtp(state, { kind: "code-ok", counter: fresh, windowId: "w1", now: NOW + 61_000 }, p60);
+		expect(r.outcome).toEqual({ reason: "opened", counter: fresh, window: "w1", expiresAt: iso(NOW + 61_000 + 5 * MIN) });
+		// The accept state is complete in one step — the caller saves once; there is no
+		// intermediate marker-only record to persist first (the old re-base locked the
+		// person out for as many periods in a row as it took to save it).
+		expect(r.state.lastCounter).toBe(fresh);
+		expect(r.state.lastAcceptedPeriod).toBe(60);
+	});
+
+	it("a code from before the change (its old-period counter, converted) is still refused as spent", () => {
+		const state = accepted();
+		const p60 = cfg({ periodSeconds: 60 });
+		// The accepted code itself: old counter C, which covers new slot converted60.
+		const r = stepOtp(state, { kind: "code-ok", counter: converted60, windowId: "w1", now: NOW + 1000 }, p60);
+		expect(r.outcome).toEqual({ reason: "spent-code" });
+		expect(r.state.lastCounter).toBe(converted60);
+	});
+
+	it("the re-base is idempotent — applying it twice yields the same marker", () => {
+		const state = accepted();
+		const p60 = cfg({ periodSeconds: 60 });
+		const spent = { kind: "code-ok", counter: converted60, windowId: "w1", now: NOW };
+		const first = stepOtp(state, spent, p60);
+		expect(first.outcome).toEqual({ reason: "spent-code" });
+		const again = stepOtp(first.state, spent, p60);
+		expect(again.outcome).toEqual({ reason: "spent-code" });
+		expect(again.state).toBe(first.state); // same marker, no second conversion
+	});
+
+	it("re-bases when the period changed in the other direction (60 s → 30 s)", () => {
 		const state = stepOtp(
 			emptyPerson(),
 			{ kind: "code-ok", counter: Math.floor(NOW / 1000 / 60), windowId: "w1", now: NOW },
 			cfg({ periodSeconds: 60 })
 		).state;
 		const r = stepOtp(state, { kind: "code-ok", counter: C, windowId: "w1", now: NOW }, cfg({ periodSeconds: 30 }));
+		// The 60 s marker's slot end falls in 30 s slot C + 1: the current 30 s code is spent.
 		expect(r.state.lastCounter).toBe(C + 1);
 		expect(r.state.lastAcceptedPeriod).toBe(30);
 		expect(r.outcome).toEqual({ reason: "spent-code" });
+		// A code from the next 30 s slot is fresh:
+		const r2 = stepOtp(r.state, { kind: "code-ok", counter: C + 2, windowId: "w1", now: NOW + 61_000 }, cfg({ periodSeconds: 30 }));
+		expect(r2.outcome.reason).toBe("opened");
 	});
 });
 
@@ -303,6 +345,13 @@ describe("stepOtp — bad codes and lockouts", () => {
 		state = { ...r.state, lockedUntil: null };
 		r = stepOtp(state, { kind: "code-bad", now: NOW + 2 * MIN }, c); // 2nd: 60 * 2^1 = 120 s → capped at 100 s
 		expect(r.outcome.until).toBe(iso(NOW + 2 * MIN + 100_000));
+	});
+
+	it("a lockoutSeconds above the old 600 default locks the full duration when maxSeconds is not given", () => {
+		// maxSeconds defaults to lockoutSeconds, so a 900 s lockout is never clamped to 600.
+		const c = cfg({ maxFailures: 1, lockoutSeconds: 900, hardLockTrigger: { lockouts: 99, windowMs: DAY } });
+		const r = stepOtp(emptyPerson(), { kind: "code-bad", now: NOW }, c);
+		expect(r.outcome.until).toBe(iso(NOW + 900_000));
 	});
 
 	it("counts within a rolling window in window-counting mode, with failureTimes maintained", () => {
@@ -486,6 +535,34 @@ describe("stepOtp — admin-unlock", () => {
 		const spent = stepOtp(r.state, { kind: "code-ok", counter: C, windowId: "w2", now: NOW + 1000 }, config);
 		expect(spent.outcome).toEqual({ reason: "spent-code" });
 	});
+
+	it("never moves lastCounter backward when the marker is already ahead of the spend", () => {
+		// The old spendThrough re-base dropped a marker of C + 5 back down to C + 1.
+		const state = { ...emptyPerson(), failures: 1, lastCounter: C + 5, lastAcceptedPeriod: 30 };
+		const r = stepOtp(state, { kind: "admin-unlock", by: "root", now: NOW }, config);
+		expect(r.outcome.reason).toBe("cleared");
+		expect(r.state.lastCounter).toBe(C + 5);
+		expect(r.state.lastAcceptedPeriod).toBe(30);
+	});
+
+	it("on a period mismatch the old marker is converted first, then maxed with the spend", () => {
+		// A marker of 100 under period 60 converts to 201 under period 30 — far ahead of
+		// the spend at 500 s (floor(500/30) + 1 = 17). The max keeps the conversion; the
+		// old spendThrough re-base would have dropped the marker from 100 to 17.
+		const state = { ...emptyPerson(), lastCounter: 100, lastAcceptedPeriod: 60 };
+		const r = stepOtp(state, { kind: "admin-unlock", by: "root", now: 500_000 }, cfg({ periodSeconds: 30 }));
+		expect(r.state.lastCounter).toBe(201);
+		expect(r.state.lastAcceptedPeriod).toBe(30);
+	});
+
+	it("on a period mismatch a spend ahead of the converted marker wins", () => {
+		// Accepted under period 60 with marker 1 long ago; unlock at 1000 s under period
+		// 30: the spend (floor(1000/30) + 1 = 34) is ahead of the converted marker (3).
+		const state = { ...emptyPerson(), lastCounter: 1, lastAcceptedPeriod: 60 };
+		const r = stepOtp(state, { kind: "admin-unlock", by: "root", now: 1000_000 }, cfg({ periodSeconds: 30 }));
+		expect(r.state.lastCounter).toBe(Math.floor(1000_000 / 1000 / 30) + 1);
+		expect(r.state.lastAcceptedPeriod).toBe(30);
+	});
 });
 
 describe("stepOtp — tick", () => {
@@ -606,27 +683,68 @@ describe("isPersonState", () => {
 		expect(isPersonState(emptyPerson())).toBe(true);
 		expect(isPersonState(accepted())).toBe(true);
 		expect(isPersonState({ ...emptyPerson(), hardLock: { since: iso(NOW), lockouts: 1 } })).toBe(true);
+		expect(isPersonState({ ...emptyPerson(), failureTimes: [NOW - 1000], windows: [{ id: "w", expiresAt: NOW + 1 }] })).toBe(true);
 	});
 
 	it.each([
 		["a non-object", 5],
 		["null", null],
+		["an array", []],
 		["a record without failures", { ...emptyPerson(), failures: undefined }],
 		["a record with a non-number failures", { ...emptyPerson(), failures: "3" }],
+		["a record with a fractional failures", { ...emptyPerson(), failures: 1.5 }],
+		["a record with a negative failures", { ...emptyPerson(), failures: -1 }],
+		["a record with a NaN failures", { ...emptyPerson(), failures: NaN }],
 		["a record without failureTimes", { ...emptyPerson(), failureTimes: undefined }],
 		["a record with a non-array failureTimes", { ...emptyPerson(), failureTimes: "x" }],
+		["a record with a non-finite failureTimes entry", { ...emptyPerson(), failureTimes: [NOW, NaN] }],
+		["a record with a non-number failureTimes entry", { ...emptyPerson(), failureTimes: [NOW, "x"] }],
+		["a record with an unparseable lockedUntil", { ...emptyPerson(), lockedUntil: "garbage" }],
 		["a record with a non-string, non-null lockedUntil", { ...emptyPerson(), lockedUntil: 5 }],
 		["a record without lockouts", { ...emptyPerson(), lockouts: undefined }],
 		["a record with a non-array lockouts", { ...emptyPerson(), lockouts: 5 }],
+		["a record with an unparseable lockouts entry", { ...emptyPerson(), lockouts: [iso(NOW), "garbage"] }],
+		["a record with a non-string lockouts entry", { ...emptyPerson(), lockouts: [5] }],
 		["a record with a non-object, non-null hardLock", { ...emptyPerson(), hardLock: 5 }],
+		["a record with an array hardLock", { ...emptyPerson(), hardLock: [] }],
+		["a record with an empty hardLock", { ...emptyPerson(), hardLock: {} }],
+		["a record with an unparseable hardLock.since", { ...emptyPerson(), hardLock: { since: "garbage", lockouts: 1 } }],
+		["a record with a non-string hardLock.since", { ...emptyPerson(), hardLock: { since: 5, lockouts: 1 } }],
+		["a record with a negative hardLock.lockouts", { ...emptyPerson(), hardLock: { since: iso(NOW), lockouts: -1 } }],
+		["a record with a fractional hardLock.lockouts", { ...emptyPerson(), hardLock: { since: iso(NOW), lockouts: 1.5 } }],
 		["a record without lastCounter", { ...emptyPerson(), lastCounter: undefined }],
 		["a record with a non-number lastCounter", { ...emptyPerson(), lastCounter: "5" }],
+		["a record with a NaN lastCounter", { ...emptyPerson(), lastCounter: NaN }],
+		["a record with a negative lastCounter", { ...emptyPerson(), lastCounter: -1 }],
 		["a record without lastAcceptedPeriod", { ...emptyPerson(), lastAcceptedPeriod: undefined }],
 		["a record with a non-number lastAcceptedPeriod", { ...emptyPerson(), lastAcceptedPeriod: "30" }],
+		["a record with a negative lastAcceptedPeriod", { ...emptyPerson(), lastAcceptedPeriod: -1 }],
+		["a record with an infinite lastAcceptedPeriod", { ...emptyPerson(), lastAcceptedPeriod: Infinity }],
 		["a record without windows", { ...emptyPerson(), windows: undefined }],
-		["a record with a non-array windows", { ...emptyPerson(), windows: {} }]
+		["a record with a non-array windows", { ...emptyPerson(), windows: {} }],
+		["a record with a non-object windows entry", { ...emptyPerson(), windows: ["w"] }],
+		["a record with an array windows entry", { ...emptyPerson(), windows: [[]] }],
+		["a record with a null windows entry", { ...emptyPerson(), windows: [null] }],
+		["a record with a windows entry without an id", { ...emptyPerson(), windows: [{ expiresAt: NOW + 1 }] }],
+		["a record with a windows entry with an empty id", { ...emptyPerson(), windows: [{ id: "", expiresAt: NOW + 1 }] }],
+		["a record with a windows entry with a non-finite expiresAt", { ...emptyPerson(), windows: [{ id: "w", expiresAt: Infinity }] }],
+		["a record with a windows entry with a non-number expiresAt", { ...emptyPerson(), windows: [{ id: "w", expiresAt: "soon" }] }]
 	])("rejects %s", (_label, state) => {
 		expect(isPersonState(state)).toBe(false);
+	});
+
+	it("stepOtp rejects a malformed record with a typed error naming the field", () => {
+		const err = otpError(
+			() => stepOtp({ ...emptyPerson(), lockedUntil: "garbage" }, { kind: "tick", now: NOW }, config),
+			"OTP_STATE_INVALID"
+		);
+		expect(err.message).toMatch(/lockedUntil/);
+		otpError(() => stepOtp({ ...emptyPerson(), lastCounter: NaN }, { kind: "tick", now: NOW }, config), "OTP_STATE_INVALID");
+		otpError(() => stepOtp({ ...emptyPerson(), hardLock: {} }, { kind: "tick", now: NOW }, config), "OTP_STATE_INVALID");
+		otpError(
+			() => stepOtp({ ...emptyPerson(), windows: [{ id: "w", expiresAt: Infinity }] }, { kind: "tick", now: NOW }, config),
+			"OTP_STATE_INVALID"
+		);
 	});
 });
 

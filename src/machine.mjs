@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
+ *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -78,19 +78,59 @@ function freezePerson(state) {
 	});
 }
 
+/** A safe integer ≥ 0. */
+function isCount(value) {
+	return Number.isSafeInteger(value) && value >= 0;
+}
+
+/** A string Date.parse understands (a persisted ISO timestamp). */
+function isParseableIso(value) {
+	return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+/** The `hardLock` snapshot shape. */
+function isHardLock(value) {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const hardLock = /** @type {{ since?: unknown, lockouts?: unknown }} */ (value);
+	return isParseableIso(hardLock.since) && isCount(hardLock.lockouts);
+}
+
+/**
+ * The first thing wrong with `state` as a PersonState record, or null when it is one.
+ * Strict on purpose: the record is persisted by hosts (quack keeps it in its store), so
+ * a field that has drifted out of shape must be refused, not guessed at — the machine
+ * fails closed rather than trusting a corrupt record.
+ * @param {unknown} state
+ * @returns {string | null} A requirement string naming the offending field, or null.
+ */
+function personStateProblem(state) {
+	if (typeof state !== "object" || state === null || Array.isArray(state)) return "state must be a PersonState record";
+	const s = /** @type {Record<string, unknown>} */ (state);
+	if (!isCount(s.failures)) return "failures must be a non-negative safe integer";
+	if (!Array.isArray(s.failureTimes)) return "failureTimes must be an array";
+	for (const t of s.failureTimes) if (typeof t !== "number" || !Number.isFinite(t)) return "failureTimes entries must be finite numbers";
+	if (s.lockedUntil !== null && !isParseableIso(s.lockedUntil)) return "lockedUntil must be null or a parseable ISO timestamp string";
+	if (!Array.isArray(s.lockouts)) return "lockouts must be an array";
+	for (const t of s.lockouts) if (!isParseableIso(t)) return "lockouts entries must be parseable ISO timestamp strings";
+	if (s.hardLock !== null && !isHardLock(s.hardLock))
+		return "hardLock must be null or an object { since: a parseable ISO timestamp string, lockouts: a non-negative safe integer }";
+	if (!isCount(s.lastCounter)) return "lastCounter must be a non-negative safe integer";
+	if (typeof s.lastAcceptedPeriod !== "number" || !Number.isFinite(s.lastAcceptedPeriod) || s.lastAcceptedPeriod < 0)
+		return "lastAcceptedPeriod must be a non-negative finite number";
+	if (!Array.isArray(s.windows)) return "windows must be an array";
+	for (const w of s.windows) {
+		if (typeof w !== "object" || w === null || Array.isArray(w)) return "windows entries must be objects";
+		const window = /** @type {{ id?: unknown, expiresAt?: unknown }} */ (w);
+		if (typeof window.id !== "string" || window.id.length === 0) return "windows entries must have a non-empty string id";
+		if (typeof window.expiresAt !== "number" || !Number.isFinite(window.expiresAt))
+			return "windows entries expiresAt must be a finite number";
+	}
+	return null;
+}
+
 /** Whether `state` is shaped like a PersonState (the machine's own runtime check). */
 export function isPersonState(state) {
-	if (typeof state !== "object" || state === null) return false;
-	return (
-		typeof state.failures === "number" &&
-		Array.isArray(state.failureTimes) &&
-		(state.lockedUntil === null || typeof state.lockedUntil === "string") &&
-		Array.isArray(state.lockouts) &&
-		(state.hardLock === null || typeof state.hardLock === "object") &&
-		typeof state.lastCounter === "number" &&
-		typeof state.lastAcceptedPeriod === "number" &&
-		Array.isArray(state.windows)
-	);
+	return personStateProblem(state) === null;
 }
 
 /**
@@ -105,14 +145,32 @@ export function lockStatus(state, now) {
 
 /**
  * The counter nothing issued at or before `now` can beat: the current step plus the
- * skew. This is the spend an admin-unlock applies (and the re-base a period change
- * applies): the current code and the next stop working briefly, nothing can replay.
+ * skew. This is the spend an admin-unlock applies: the current code and the next stop
+ * working briefly, nothing can replay.
  * @param {number} now Ms.
  * @param {import("./options.mjs").OtpMachineConfig} config
  * @returns {number}
  */
 export function spendThrough(now, config) {
 	return Math.floor(now / 1000 / config.periodSeconds) + config.skewSteps;
+}
+
+/**
+ * Re-express a spend marker from one period's units to another's — the re-base a period
+ * change applies. The old marker `counter` (under `fromPeriod`) accepted everything
+ * through slot `counter`'s end, i.e. through `(counter + 1) * fromPeriod` seconds; in
+ * `toPeriod` units that end falls in slot `ceil((counter + 1) * fromPeriod / toPeriod) - 1`.
+ * Deliberately independent of `now` (a re-base keyed to the current step would spend the
+ * code the user is about to present, locking them out for as many periods in a row as it
+ * takes the host to save the re-based state) and idempotent (applying it twice yields the
+ * same marker, so a host that fails to persist the first conversion loses nothing).
+ * @param {number} counter The marker in `fromPeriod` units.
+ * @param {number} fromPeriod The period the marker was computed under, in seconds.
+ * @param {number} toPeriod The period to convert to, in seconds.
+ * @returns {number} The marker in `toPeriod` units.
+ */
+function convertCounter(counter, fromPeriod, toPeriod) {
+	return Math.ceil(((counter + 1) * fromPeriod) / toPeriod) - 1;
 }
 
 /**
@@ -217,7 +275,9 @@ function requireNow(event) {
 export function stepOtp(state, event, config) {
 	if (!isOtpMachineConfig(config))
 		throw new OtpError("OTP_CONFIG_INVALID", "otp machine: config must be a valid machine config (build it with parseOtpOptions)");
-	if (!isPersonState(state)) throw new OtpError("OTP_STATE_INVALID", "otp machine: state must be a PersonState record");
+	const stateProblem = personStateProblem(state);
+	if (stateProblem !== null)
+		throw new OtpError("OTP_STATE_INVALID", `otp machine: state is not a valid PersonState record: ${stateProblem}`);
 	switch (event.kind) {
 		case "code-ok":
 			return codeOk(state, event, config);
@@ -274,12 +334,12 @@ function codeOk(state, event, config) {
 
 	// Spent semantics: the machine decides "spent" when the counter is at or below the
 	// spend marker under the stored period. If the period changed since the last accept,
-	// re-base the marker to the new period first — the same spend an unlock applies:
-	// nothing can replay, and the only cost is that the current codes stop working briefly.
+	// re-base the marker to the new period first — in the new period's units, spending
+	// exactly the time already accepted (the old marker's slot end) and nothing more.
 	let lastCounter = working.lastCounter;
 	let lastAcceptedPeriod = working.lastAcceptedPeriod;
 	if (lastAcceptedPeriod !== 0 && lastAcceptedPeriod !== config.periodSeconds) {
-		lastCounter = spendThrough(event.now, config);
+		lastCounter = convertCounter(lastCounter, lastAcceptedPeriod, config.periodSeconds);
 		lastAcceptedPeriod = config.periodSeconds;
 	}
 	if (event.counter <= lastCounter && config.refuseReused) {
@@ -396,16 +456,29 @@ function adminUnlock(state, event, config) {
 
 	// Everything resets except the windows (an open window survives an unlock) and the
 	// spend marker: with spendOnUnlock the codes through now are spent (the lost-update
-	// guard — an unlock must not hand back a code the host just used).
+	// guard — an unlock must not hand back a code the host just used). The marker only
+	// ever moves forward: on a period mismatch the old marker is converted to the new
+	// period's units first (the same re-base a code-ok applies), then the spend is a
+	// max with it — an unlock must never lower a marker a prior accept already raised.
 	const had = state.hardLock !== null || state.failures > 0 || state.lockedUntil !== null || state.lockouts.length > 0;
+	let lastCounter = state.lastCounter;
+	let lastAcceptedPeriod = state.lastAcceptedPeriod;
+	if (config.spendOnUnlock) {
+		if (lastAcceptedPeriod !== 0 && lastAcceptedPeriod !== config.periodSeconds) {
+			lastCounter = convertCounter(lastCounter, lastAcceptedPeriod, config.periodSeconds);
+			lastAcceptedPeriod = config.periodSeconds;
+		}
+		lastCounter = Math.max(lastCounter, spendThrough(event.now, config));
+		if (lastAcceptedPeriod === 0) lastAcceptedPeriod = config.periodSeconds;
+	}
 	const next = freezePerson({
 		failures: 0,
 		failureTimes: [],
 		lockedUntil: null,
 		lockouts: [],
 		hardLock: null,
-		lastCounter: config.spendOnUnlock ? spendThrough(event.now, config) : state.lastCounter,
-		lastAcceptedPeriod: config.spendOnUnlock ? config.periodSeconds : state.lastAcceptedPeriod,
+		lastCounter,
+		lastAcceptedPeriod,
 		windows: state.windows
 	});
 	const reason = /** @type {"unlocked" | "cleared" | "no-entry"} */ (state.hardLock !== null ? "unlocked" : had ? "cleared" : "no-entry");

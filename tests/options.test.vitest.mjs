@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:24:35-08:00 (1794551075)
+ *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -219,6 +219,50 @@ describe("parseOtpOptions", () => {
 
 	it("reports the first problem when several options are bad", () => {
 		expect(() => parseOtpOptions({ digits: 9, maxFailures: 0 })).toThrow(/digits must be an integer between 6 and 8/);
+	});
+});
+
+describe("lockoutEscalation.maxSeconds", () => {
+	it("defaults to lockoutSeconds when not given, so factor 1 is no cap at all", () => {
+		expect(parseOtpOptions({ lockoutSeconds: 900 }).lockoutEscalation).toEqual({ factor: 1, maxSeconds: 900 });
+		// Also when the escalation object is given without a maxSeconds:
+		expect(parseOtpOptions({ lockoutSeconds: 900, lockoutEscalation: { factor: 2 } }).lockoutEscalation).toEqual({
+			factor: 2,
+			maxSeconds: 900
+		});
+		// And the defaults keep their explicit cap:
+		expect(parseOtpOptions().lockoutEscalation).toEqual({ factor: 1, maxSeconds: 600 });
+	});
+
+	it("accepts maxSeconds equal to lockoutSeconds and at the upper bound", () => {
+		expect(parseOtpOptions({ lockoutEscalation: { factor: 3, maxSeconds: 600 } }).lockoutEscalation).toEqual({
+			factor: 3,
+			maxSeconds: 600
+		});
+		expect(parseOtpOptions({ lockoutEscalation: { factor: 1, maxSeconds: 8_640_000_000_000 } }).lockoutEscalation.maxSeconds).toBe(
+			8_640_000_000_000
+		);
+	});
+
+	it.each([
+		[
+			"maxSeconds below lockoutSeconds",
+			{ lockoutSeconds: 900, lockoutEscalation: { factor: 1, maxSeconds: 600 } },
+			/lockoutEscalation\.maxSeconds must not be below lockoutSeconds/
+		],
+		[
+			"maxSeconds above the bound",
+			{ lockoutSeconds: 600, lockoutEscalation: { factor: 1, maxSeconds: 8_640_000_000_001 } },
+			/lockoutEscalation\.maxSeconds must be at most 8640000000000/
+		]
+	])("rejects %s", (_label, input, message) => {
+		expect(() => parseOtpOptions(input)).toThrow(OtpError);
+		try {
+			parseOtpOptions(input);
+		} catch (err) {
+			expect(err.code).toBe("OTP_OPTIONS_INVALID");
+			expect(err.message).toMatch(message);
+		}
 	});
 });
 

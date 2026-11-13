@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T22:23:45-08:00 (1794551025)
+ *	@Last modified time: 2026-11-12T22:38:35-08:00 (1794551915)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -58,7 +58,10 @@ export const DEFAULTS = Object.freeze({
 	lockoutSeconds: 600,
 	/**
 	 * Lockout escalation: the Nth lockout within the rolling `hardLockTrigger.windowMs`
-	 * lasts `lockoutSeconds * factor^(N-1)`, capped at `maxSeconds`.
+	 * lasts `lockoutSeconds * factor^(N-1)`, capped at `maxSeconds`. `maxSeconds` defaults
+	 * to `lockoutSeconds` when not given (factor 1 is then no cap at all); it must not be
+	 * below `lockoutSeconds` and is bounded at 8_640_000_000_000 s (a larger cap overflows
+	 * the millisecond range Date can represent).
 	 */
 	lockoutEscalation: Object.freeze({ factor: 1, maxSeconds: 600 }),
 	/** Whether an admin-unlock also spends the codes through now (the lost-update guard). */
@@ -76,6 +79,13 @@ const posInt = (v) => isInt(v) && v > 0;
 const nonEmptyString = (v) => typeof v === "string" && v.length > 0;
 
 const FAILURE_COUNTING_MODES = ["since-accept-or-lockout", "window"];
+
+/**
+ * Upper bound for `lockoutEscalation.maxSeconds`: 8.64e12 s ≈ 1e8 days. A lockout's end
+ * is computed as `now + seconds * 1000` ms, and beyond ~8.64e15 ms `Date.toISOString`
+ * throws a RangeError — a larger cap could not produce a valid lockout end.
+ */
+const MAX_LOCKOUT_SECONDS = 8_640_000_000_000;
 
 /**
  * Everything wrong with `config` as a list of requirement strings (empty = valid). The
@@ -116,6 +126,14 @@ function configProblems(config) {
 	const esc = /** @type {{ factor?: unknown, maxSeconds?: unknown }} */ (config.lockoutEscalation);
 	if (!isObject(esc) || !posInt(esc.factor) || !posInt(esc.maxSeconds)) {
 		problems.push("otp options: lockoutEscalation must be an object with a positive-integer factor and maxSeconds");
+	} else if (isInt(config.lockoutSeconds) && esc.maxSeconds < config.lockoutSeconds) {
+		problems.push(
+			"otp options: lockoutEscalation.maxSeconds must not be below lockoutSeconds (a cap below the base lockout would clamp every lockout)"
+		);
+	} else if (esc.maxSeconds > MAX_LOCKOUT_SECONDS) {
+		problems.push(
+			`otp options: lockoutEscalation.maxSeconds must be at most ${MAX_LOCKOUT_SECONDS} (a larger cap overflows the millisecond range Date can represent)`
+		);
 	}
 
 	const trigger = /** @type {{ lockouts?: unknown, windowMs?: unknown }} */ (config.hardLockTrigger);
@@ -142,6 +160,15 @@ export function parseOtpOptions(input) {
 		if (!KNOWN_KEYS.has(key)) throw new OtpError("OTP_OPTIONS_INVALID", `otp options: unknown option "${key}"`);
 	}
 	const merged = /** @type {Record<string, unknown>} */ ({ ...DEFAULTS, ...raw });
+	// `lockoutEscalation.maxSeconds` defaults to `lockoutSeconds` when not given: factor 1
+	// then means "no cap at all", and a caller raising `lockoutSeconds` (say 900) is never
+	// silently clamped back down to the default's cap.
+	const escGiven = /** @type {{ maxSeconds?: unknown } | undefined} */ (raw.lockoutEscalation);
+	if (escGiven === undefined) {
+		merged.lockoutEscalation = { ...DEFAULTS.lockoutEscalation, maxSeconds: merged.lockoutSeconds };
+	} else if (isObject(escGiven) && escGiven.maxSeconds === undefined) {
+		merged.lockoutEscalation = { ...escGiven, maxSeconds: merged.lockoutSeconds };
+	}
 	// Fresh copies of the nested objects, so freezing the result never freezes an object
 	// the caller still owns.
 	for (const key of ["failureCounting", "lockoutEscalation", "hardLockTrigger"]) {
@@ -186,7 +213,7 @@ function deepFreeze(value) {
  * @property {number} maxFailures Bad codes that start a short lockout.
  * @property {{ mode: "since-accept-or-lockout" } | { mode: "window", windowMs: number }} failureCounting How bad codes are counted.
  * @property {number} lockoutSeconds Seconds one short lockout lasts (before escalation).
- * @property {{ factor: number, maxSeconds: number }} lockoutEscalation Lockout escalation within the hard-lock window.
+ * @property {{ factor: number, maxSeconds: number }} lockoutEscalation Lockout escalation within the hard-lock window. `maxSeconds` defaults to `lockoutSeconds` when not given, must not be below it, and is bounded at 8_640_000_000_000 s (a larger cap overflows the ms range Date can represent).
  * @property {boolean} spendOnUnlock Whether an admin-unlock spends the codes through now.
  * @property {boolean} hardLockEnabled Whether new hard locks can be created.
  * @property {{ lockouts: number, windowMs: number }} hardLockTrigger Hard lock trigger.
