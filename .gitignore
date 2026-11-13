@@ -1,0 +1,14 @@
+# deps + build
+node_modules/
+dist/
+
+# test coverage output
+coverage/
+
+# scratch
+tmp/
+*.log
+
+# editor / OS
+.DS_Store
+.vscode/

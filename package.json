@@ -1,0 +1,42 @@
+{
+	"name": "@cldmv/otp",
+	"version": "0.0.0",
+	"description": "Configurable TOTP codes, otpauth/QR enrolment and a pure lockout state machine",
+	"type": "module",
+	"license": "Apache-2.0",
+	"author": {
+		"name": "Shinrai",
+		"company": "CLDMV",
+		"email": "git+npm@cldmv.net",
+		"url": "https://cldmv.net"
+	},
+	"contributors": [
+		{
+			"name": "CLDMV",
+			"url": "https://github.com/CLDMV"
+		}
+	],
+	"funding": {
+		"type": "github",
+		"url": "https://github.com/sponsors/shinrai"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/CLDMV/otp.git"
+	},
+	"bugs": {
+		"url": "https://github.com/CLDMV/otp/issues"
+	},
+	"homepage": "https://github.com/CLDMV/otp#readme",
+	"publishConfig": {
+		"access": "public"
+	},
+	"sideEffects": false,
+	"devEngines": {
+		"runtime": {
+			"name": "node",
+			"version": ">=22.22.0",
+			"onFail": "error"
+		}
+	}
+}
