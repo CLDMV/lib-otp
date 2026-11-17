@@ -6,10 +6,14 @@ Everything is plain functions over injected inputs: no environment, no filesyste
 
 ## ✨ What's New
 
-### Latest: v0.1.0 (November 2026)
+### Latest: v0.2.0 (November 2026)
 
-- **First release** — configurable TOTP verification, otpauth/QR enrolment and a pure per-person lockout state machine with escalation and an optional hard lock, all driven by one validated option set. It also ships an `otp` command line (`seed`, `uri`, `qr`, `code`, `verify`) that reads seeds only from a file or stdin.
-- [View full v0.1.0 Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.1.0.md)
+- **`renderQr` moves to `@cldmv/lib-otp/qr`.** The main entry no longer loads `qrcode`, so a host that bundles the library into one ES module (like gh-broker's daemon) can load it. Change `renderQr` imports to the subpath; nothing else changes.
+- [View full v0.2.0 Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.2.0.md)
+
+### Recent Releases
+
+- **v0.1.0** (November 2026) — first release: configurable TOTP verification, otpauth/QR enrolment, the per-person lockout machine and the `otp` command line ([Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.1.0.md))
 
 ## Install
 
