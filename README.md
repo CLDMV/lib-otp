@@ -135,7 +135,8 @@ The machine enforces its own lock: `code-ok`, `code-bad` and `window-use` while 
 ## Enrolment
 
 ```js
-import { newSeed, otpauthUri, renderQr, verifyCode } from "@cldmv/lib-otp";
+import { newSeed, otpauthUri, verifyCode } from "@cldmv/lib-otp";
+import { renderQr } from "@cldmv/lib-otp/qr";
 
 const seed = newSeed(); // 20 random bytes as base32 (32 chars); { seedBytes, random } injectable
 const uri = otpauthUri(seed, "ada@example.com", "gh-broker", config); // label/issuer optional — they default to the config's uriLabel/uriIssuer
@@ -145,7 +146,7 @@ console.log(await renderQr(uri)); // terminal QR
 - `verifyCode(seed, code, now, config)` returns the TOTP step the code matches (skew-aware, digit-count from the config), or `undefined` when it matches none. A malformed code — including a non-string one — never matches; **a broken seed throws** — a config error must never read as "no match" and lock everyone out. Take the config — not loose options — so the verifier can't disagree with the machine.
 - `currentCode(seed, now, config)` returns the code an authenticator app would display at `now` — no skew window. It shares `verifyCode`'s decode and refusals (a broken seed throws, never a code for garbage), so a display path can never accept a seed the verifier would refuse.
 - `otpauthUri(seed, label?, issuer?, config)` validates the seed as base32 before anything is interpolated (a raw seed like `"not&valid"` would otherwise inject a URI parameter) and defaults `label`/`issuer` to the config's `uriLabel`/`uriIssuer` when omitted (explicit arguments win).
-- `renderQr(uri, { format })` renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic.
+- `renderQr(uri, { format })`, imported from `@cldmv/lib-otp/qr`, renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic. It lives on its own subpath so the main entry never loads `qrcode`, a CommonJS package that breaks a host bundling the library into a single ES module.
 
 ## The `otp` command-line
 

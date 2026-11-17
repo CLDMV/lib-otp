@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:15:06-08:00 (1794554106)
+ *	@Last modified time: 2026-11-16T17:16:12-08:00 (1794878172)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -44,6 +44,8 @@ export { DEFAULTS, parseOtpOptions, isOtpMachineConfig } from "./options.mjs";
 
 export { emptyPerson, isPersonState, stepOtp, lockStatus, spendThrough, compactPerson } from "./machine.mjs";
 
-export { verifyCode, currentCode, newSeed, otpauthUri, renderQr } from "./enrol.mjs";
+export { verifyCode, currentCode, newSeed, otpauthUri } from "./enrol.mjs";
+
+// renderQr lives at "@cldmv/lib-otp/qr" (src/qr.mjs), so this entry never loads qrcode.
 
 export { describeUser, describeUsers, formatStatus } from "./status.mjs";

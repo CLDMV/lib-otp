@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:15:06-08:00 (1794554106)
+ *	@Last modified time: 2026-11-16T17:16:13-08:00 (1794878173)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -17,7 +17,8 @@ import { describe, it, expect } from "vitest";
 import { base32Decode, base32Encode, hotp, matchStep, stepAt } from "../src/totp.mjs";
 import { parseOtpOptions } from "../src/options.mjs";
 import { OtpError } from "../src/errors.mjs";
-import { currentCode, newSeed, otpauthUri, renderQr, verifyCode } from "../src/enrol.mjs";
+import { currentCode, newSeed, otpauthUri, verifyCode } from "../src/enrol.mjs";
+import { renderQr } from "../src/qr.mjs";
 
 // RFC 6238 appendix B seed: the ASCII string "12345678901234567890".
 const KEY = Buffer.from("12345678901234567890", "ascii");
