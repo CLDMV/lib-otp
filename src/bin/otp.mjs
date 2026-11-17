@@ -8,7 +8,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T23:25:20-08:00 (1794554720)
+ *	@Last modified time: 2026-11-16T17:16:11-08:00 (1794878171)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -37,7 +37,8 @@ import { constants as fsConstants, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { OtpError } from "../errors.mjs";
 import { name, parseOtpOptions, version } from "../index.mjs";
-import { currentCode, newSeed, otpauthUri, renderQr, verifyCode } from "../enrol.mjs";
+import { currentCode, newSeed, otpauthUri, verifyCode } from "../enrol.mjs";
+import { renderQr } from "../qr.mjs";
 
 /**
  * A usage error: bad subcommand, unknown option, a missing seed source. Always exit 2.

@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-12T18:03:03-08:00 (1794535383)
+ *	@Last modified time: 2026-11-16T17:16:13-08:00 (1794878173)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -21,7 +21,11 @@ export default defineConfig([
 	{
 		// ESM library entry → dist/index.mjs (the only bundled output; a second CJS
 		// bundle would duplicate the package — see docs/conventions/package-layout.md).
-		entry: { index: "src/index.mjs" },
+		// qr → dist/qr.mjs, the "@cldmv/lib-otp/qr" subpath. Its import of the main entry
+		// stays external, so it shares dist/index.mjs (and its OtpError) instead of bundling
+		// a second copy.
+		entry: { index: "src/index.mjs", qr: "src/qr.mjs" },
+		external: ["./index.mjs"],
 		format: ["esm"],
 		outDir: "dist",
 		target: "node20", // matches package.json engines.node (>=20.19.0)

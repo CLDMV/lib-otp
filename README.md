@@ -6,10 +6,14 @@ Everything is plain functions over injected inputs: no environment, no filesyste
 
 ## ✨ What's New
 
-### Latest: v0.1.0 (November 2026)
+### Latest: v0.2.0 (November 2026)
 
-- **First release** — configurable TOTP verification, otpauth/QR enrolment and a pure per-person lockout state machine with escalation and an optional hard lock, all driven by one validated option set. It also ships an `otp` command line (`seed`, `uri`, `qr`, `code`, `verify`) that reads seeds only from a file or stdin.
-- [View full v0.1.0 Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.1.0.md)
+- **`renderQr` moves to `@cldmv/lib-otp/qr`.** The main entry no longer loads `qrcode`, so a host that bundles the library into one ES module (like gh-broker's daemon) can load it. Change `renderQr` imports to the subpath; nothing else changes.
+- [View full v0.2.0 Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.2.0.md)
+
+### Recent Releases
+
+- **v0.1.0** (November 2026) — first release: configurable TOTP verification, otpauth/QR enrolment, the per-person lockout machine and the `otp` command line ([Changelog](https://github.com/CLDMV/lib-otp/blob/master/docs/changelog/v0/v0.1.0.md))
 
 ## Install
 
@@ -135,7 +139,8 @@ The machine enforces its own lock: `code-ok`, `code-bad` and `window-use` while 
 ## Enrolment
 
 ```js
-import { newSeed, otpauthUri, renderQr, verifyCode } from "@cldmv/lib-otp";
+import { newSeed, otpauthUri, verifyCode } from "@cldmv/lib-otp";
+import { renderQr } from "@cldmv/lib-otp/qr";
 
 const seed = newSeed(); // 20 random bytes as base32 (32 chars); { seedBytes, random } injectable
 const uri = otpauthUri(seed, "ada@example.com", "gh-broker", config); // label/issuer optional — they default to the config's uriLabel/uriIssuer
@@ -145,7 +150,7 @@ console.log(await renderQr(uri)); // terminal QR
 - `verifyCode(seed, code, now, config)` returns the TOTP step the code matches (skew-aware, digit-count from the config), or `undefined` when it matches none. A malformed code — including a non-string one — never matches; **a broken seed throws** — a config error must never read as "no match" and lock everyone out. Take the config — not loose options — so the verifier can't disagree with the machine.
 - `currentCode(seed, now, config)` returns the code an authenticator app would display at `now` — no skew window. It shares `verifyCode`'s decode and refusals (a broken seed throws, never a code for garbage), so a display path can never accept a seed the verifier would refuse.
 - `otpauthUri(seed, label?, issuer?, config)` validates the seed as base32 before anything is interpolated (a raw seed like `"not&valid"` would otherwise inject a URI parameter) and defaults `label`/`issuer` to the config's `uriLabel`/`uriIssuer` when omitted (explicit arguments win).
-- `renderQr(uri, { format })` renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic.
+- `renderQr(uri, { format })`, imported from `@cldmv/lib-otp/qr`, renders `"terminal"` (default, small), `"svg"`, `"png-data-url"` or `"png-buffer"`; the qrcode functions are injectable (`toString`, `toDataURL`, `toBuffer`) so tests stay hermetic. It lives on its own subpath so the main entry never loads `qrcode`, a CommonJS package that breaks a host bundling the library into a single ES module.
 
 ## The `otp` command-line
 
