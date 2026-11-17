@@ -41,6 +41,14 @@
 			"import": "./dist/index.mjs",
 			"require": "./dist/index.cjs"
 		},
+		"./qr": {
+			"lib-otp-dev": {
+				"types": "./types/src/qr.d.mts",
+				"default": "./src/qr.mjs"
+			},
+			"types": "./types/src/qr.d.mts",
+			"default": "./dist/qr.mjs"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [
@@ -61,7 +69,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsup",
+		"build": "tsup && node tests/dist-smoke.mjs",
 		"build:ci": "npm run lint && npm run format:check && npm run types:build && npm run build",
 		"prepack": "npm run build",
 		"prepare": "node -e \"import('./.githooks/install.mjs').catch(()=>{})\"",
