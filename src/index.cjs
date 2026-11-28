@@ -13,6 +13,14 @@
  *
  */
 
+/**
+ * CommonJS entry point: the generic CLDMV shim over the ESM build.
+ *
+ * The package exports many distinct values, so `require("@cldmv/lib-otp")` returns the module object
+ * (`{ stepOtp, hotp, verifyCode, ... }`), with every export `import` sees.
+ *
+ * @module @cldmv/lib-otp
+ */
 "use strict";
 
 if (!process.features?.require_module) {
@@ -23,4 +31,12 @@ if (!process.features?.require_module) {
 	throw error;
 }
 
-module.exports = require("./index.mjs");
+// Same exports as `import`. One distinct exported value (aliases of it count once) comes back as that value,
+// so require(x)(...) works; anything else comes back as the module object ({ default, ...named }).
+const esm = require("./index.mjs");
+const values = new Set(
+	Object.keys(esm)
+		.filter((key) => key !== "__esModule")
+		.map((key) => esm[key])
+);
+module.exports = values.size === 1 ? values.values().next().value : esm;
